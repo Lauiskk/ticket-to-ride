@@ -387,9 +387,20 @@ Depois que a Vercel devolver a URL, atualize no Railway:
 CORS_ORIGIN=https://<seu-projeto>.vercel.app
 ```
 
-E na Stripe, aponte o webhook para
-`https://ticket-to-ride-production-ebbe.up.railway.app/payments/webhook`
-(evento `payment_intent.succeeded` e `payment_intent.payment_failed`).
+#### Webhook da Stripe — já criado ✅
+
+Endpoint `we_1U3d2O80lOSI3x5bjApaGFZI`, ativo, apontando para
+`https://ticket-to-ride-production-ebbe.up.railway.app/payments/webhook`,
+ouvindo `payment_intent.succeeded` e `payment_intent.payment_failed`. O
+`STRIPE_WEBHOOK_SECRET` correspondente já está no Railway.
+
+> **Não fixe `api_version` ao criar o endpoint.** A conta está em
+> `2026-07-29.dahlia`; passar `api_version=2024-06-20` devolve
+> `Invalid request (check your POST parameters)` sem dizer qual parâmetro.
+
+Validado em produção: cartão `4242…` → webhook entregue (`pending_webhooks: 0`)
+→ reserva `paid` → ingresso com QR emitido. Cartão `chargeDeclined` → assento de
+volta para `available`.
 
 #### 5. CI/CD
 
@@ -433,6 +444,22 @@ gh secret set VERCEL_PROJECT_ID  # idem
 | Meia-entrada | Declaração + documento conferido na portaria | Upload de comprovante com moderação, se o rigor exigir |
 | 2FA / OTP / magic link | Só o TOTP (2FA) está implementado | OTP por SMS/WhatsApp e magic link exigem provedor de envio |
 | OAuth | Só Google | Apple exige conta paga de desenvolvedor |
+
+### Armadilha resolvida — vale saber
+
+`PaymentController` e `StripeWebhookController` moram os dois em `payments`, e o
+primeiro declara `POST :reservationId`. Registrado antes, ele engolia
+`POST /payments/webhook` como `reservationId = "webhook"` — rota exclusiva de
+cliente — e a Stripe recebia **401**. O `@Public()` do webhook nunca era
+consultado, e o `ParseUUIDPipe` nunca chegava a rejeitar `"webhook"` porque
+guards rodam antes de pipes.
+
+Pior: o sintoma era invisível. O pagamento fechava mesmo assim, porque o modal de
+checkout consulta `/payments/:id/status`, que reconcilia direto com a Stripe. A
+aplicação parecia saudável enquanto **toda** entrega de webhook falhava.
+
+A ordem em `payment.module.ts` agora é obrigatória e está travada por teste
+(`payment.routing.spec.ts`).
 
 ### Verificado e funcionando
 
