@@ -35,6 +35,10 @@ export interface Event {
   price: number;
   currency: string;
   status: EventStatus;
+  /** Half-price offered (Lei 12.933/2013). Defaults to true on the API. */
+  halfPriceEnabled: boolean;
+  /** Cap on half-price tickets; null = no cap. */
+  halfPriceQuota: number | null;
   availableSeats?: number;
   externalId: string | null;
   externalSource: string | null;
@@ -115,6 +119,9 @@ export interface Ticket {
   qrImageFormat: string;
   hmacSignature: string;
   status: TicketStatus;
+  /** Half-price ticket — the gate will ask for the declared document. */
+  isHalfPrice: boolean;
+  halfPriceCategory: string | null;
   validatedAt: string | null;
   validatedByGateId: string | null;
   createdAt: string;
@@ -136,6 +143,11 @@ export interface ValidationResult {
   seatIdentifier?: string;
   eventTitle?: string;
   validatedAt?: string;
+  /** Half-price ticket — the operator must check the matching document. */
+  isHalfPrice?: boolean;
+  halfPriceCategory?: string | null;
+  /** Masked by the API — never the full number. */
+  holderDocumentMasked?: string | null;
   error?: { code: string; message: string; firstValidatedAt?: string };
 }
 
@@ -190,6 +202,32 @@ export interface ApiError {
 }
 
 // ─── WebSocket ──────────────────────────────────────────────────────────────
+
+/** Sales panel for one event (GET /events/:id/metrics) — aggregates only. */
+export interface EventMetrics {
+  eventId: string;
+  title: string;
+  status: EventStatus;
+  seatsTotal: number;
+  seatsSold: number;
+  seatsReserved: number;
+  seatsAvailable: number;
+  occupancyRate: number;
+  revenue: number;
+  currency: string;
+  ticketsIssued: number;
+  ticketsValidated: number;
+  halfPriceTickets: number;
+  bySection: Array<{ section: string; total: number; sold: number }>;
+}
+
+export type HalfPriceCategory = 'student' | 'senior' | 'pcd';
+
+export interface HalfPriceClaim {
+  seatId: string;
+  category: HalfPriceCategory;
+  document: string;
+}
 
 /**
  * One line of the gate's operational agenda (GET /gate/events).

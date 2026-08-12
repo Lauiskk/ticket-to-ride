@@ -1,17 +1,28 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import type { Seat } from '../types';
+import { HalfPriceSelector } from './HalfPriceSelector';
+import { formatMoney } from '../lib/eventStatus';
+import type { Seat, HalfPriceClaim } from '../types';
 
 interface SeatMapProps {
   seats: Seat[];
   price: number;
-  currency: string;
-  onReserve: (seatIds: string[]) => void;
+  /** Whether this event offers half-price tickets (SPEC_CP12). */
+  halfPriceEnabled?: boolean;
+  onReserve: (seatIds: string[], halfPriceClaims: HalfPriceClaim[]) => void;
   isReserving: boolean;
 }
 
-export function SeatMap({ seats, price, currency, onReserve, isReserving }: SeatMapProps) {
+export function SeatMap({
+  seats,
+  price,
+  halfPriceEnabled = false,
+  onReserve,
+  isReserving,
+}: SeatMapProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [halfPriceClaims, setHalfPriceClaims] = useState<HalfPriceClaim[]>([]);
+  const [halfPriceValid, setHalfPriceValid] = useState(true);
 
   // Group seats by section and row
   const sections = useMemo(() => {
@@ -48,7 +59,20 @@ export function SeatMap({ seats, price, currency, onReserve, isReserving }: Seat
     return 'bg-board-navy/30 cursor-not-allowed opacity-50';
   };
 
-  const totalPrice = selectedIds.size * price;
+  // Preview only — the server recalculates from event.price (SPEC_CP12 RF-10)
+  const halfCount = halfPriceClaims.length;
+  const totalPrice = (selectedIds.size - halfCount) * price + halfCount * (price / 2);
+
+  const selectedSeats = useMemo(
+    () =>
+      seats
+        .filter((s) => selectedIds.has(s.id))
+        .map((s) => ({
+          id: s.id,
+          label: `${s.section} · Fila ${s.row} · Assento ${s.number}`,
+        })),
+    [seats, selectedIds],
+  );
 
   return (
     <div>
@@ -103,15 +127,31 @@ export function SeatMap({ seats, price, currency, onReserve, isReserving }: Seat
               {selectedIds.size} assento{selectedIds.size > 1 ? 's' : ''} selecionado{selectedIds.size > 1 ? 's' : ''}
             </span>
             <span className="font-display text-xl font-bold text-board-crimson">
-              {currency} {totalPrice.toFixed(2)}
+              {formatMoney(totalPrice)}
             </span>
           </div>
+          {halfPriceEnabled && (
+            <HalfPriceSelector
+              seats={selectedSeats}
+              price={price}
+              currency="BRL"
+              onChange={(claims, valid) => {
+                setHalfPriceClaims(claims);
+                setHalfPriceValid(valid);
+              }}
+            />
+          )}
+
           <button
-            onClick={() => onReserve(Array.from(selectedIds))}
-            disabled={isReserving}
-            className="btn-primary w-full disabled:opacity-50"
+            onClick={() => onReserve(Array.from(selectedIds), halfPriceClaims)}
+            disabled={isReserving || !halfPriceValid}
+            className="btn-primary w-full mt-4 disabled:opacity-50"
           >
-            {isReserving ? 'Reservando...' : 'Reservar Assentos'}
+            {isReserving
+              ? 'Reservando...'
+              : !halfPriceValid
+                ? 'Complete os dados da meia-entrada'
+                : 'Reservar assentos'}
           </button>
         </motion.div>
       )}

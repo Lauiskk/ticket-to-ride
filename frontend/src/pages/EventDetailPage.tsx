@@ -9,7 +9,7 @@ import { GeneralAdmissionSelector } from '../components/GeneralAdmissionSelector
 import { PaymentModal } from '../components/PaymentModal';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import type { Reservation } from '../types';
+import type { Reservation, HalfPriceClaim } from '../types';
 
 /**
  * Turn a backend error into something a buyer can act on.
@@ -20,6 +20,8 @@ function reserveErrorMessage(err: { code?: string; statusCode?: number }): strin
   switch (err.code) {
     case 'SEAT_UNAVAILABLE':
       return 'Alguém garantiu esse lugar primeiro. Escolha outro no mapa — ele já foi atualizado.';
+    case 'HALF_PRICE_QUOTA_EXCEEDED':
+      return 'As meias-entradas deste evento acabaram. Você ainda pode comprar como inteira.';
     case 'BAD_REQUEST':
       return 'Esses assentos não estão mais disponíveis para este evento.';
     case 'UNAUTHORIZED':
@@ -49,7 +51,7 @@ export function EventDetailPage() {
     expiresAt: string;
   } | null>(null);
 
-  const handleReserve = async (seatIds: string[]) => {
+  const handleReserve = async (seatIds: string[], halfPriceClaims: HalfPriceClaim[] = []) => {
     if (!user) {
       navigate('/login');
       return;
@@ -64,7 +66,11 @@ export function EventDetailPage() {
 
     let reservationId: string | null = null;
     try {
-      const res = await api.post<Reservation>('/reservations', { eventId: id, seatIds });
+      const res = await api.post<Reservation>('/reservations', {
+        eventId: id,
+        seatIds,
+        ...(halfPriceClaims.length > 0 ? { halfPriceClaims } : {}),
+      });
       reservationId = res.data.id;
 
       const paymentRes = await api.post<{ clientSecret: string; paymentId: string }>(
@@ -223,7 +229,7 @@ export function EventDetailPage() {
             <SeatMap
               seats={seats || []}
               price={Number(event.price)}
-              currency="R$"
+              halfPriceEnabled={event.halfPriceEnabled}
               onReserve={handleReserve}
               isReserving={isReserving}
             />
@@ -231,8 +237,8 @@ export function EventDetailPage() {
             <GeneralAdmissionSelector
               availableCount={availableSeats.length}
               price={Number(event.price)}
-              currency="R$"
               seatIds={availableSeats.map((s) => s.id)}
+              halfPriceEnabled={event.halfPriceEnabled}
               onReserve={handleReserve}
               isReserving={isReserving}
             />

@@ -1,35 +1,53 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
+import { HalfPriceSelector } from './HalfPriceSelector';
+import { formatMoney } from '../lib/eventStatus';
+import type { HalfPriceClaim } from '../types';
 
 interface GeneralAdmissionSelectorProps {
   availableCount: number;
   price: number;
-  currency: string;
   seatIds: string[]; // Available seat IDs to select from
-  onReserve: (seatIds: string[]) => void;
+  /** Whether this event offers half-price tickets (SPEC_CP12). */
+  halfPriceEnabled?: boolean;
+  onReserve: (seatIds: string[], halfPriceClaims: HalfPriceClaim[]) => void;
   isReserving: boolean;
 }
 
 export function GeneralAdmissionSelector({
   availableCount,
   price,
-  currency,
   seatIds,
+  halfPriceEnabled = false,
   onReserve,
   isReserving,
 }: GeneralAdmissionSelectorProps) {
   const [quantity, setQuantity] = useState(1);
+  const [halfPriceClaims, setHalfPriceClaims] = useState<HalfPriceClaim[]>([]);
+  const [halfPriceValid, setHalfPriceValid] = useState(true);
 
   const maxQuantity = Math.min(availableCount, 10); // Max 10 per transaction
-  const totalPrice = quantity * price;
+
+  // In general admission the "seat" is just a slot — we take the first N, and
+  // the half-price picker labels them by position so the buyer can tell which
+  // of their own tickets carries the benefit.
+  const chosen = useMemo(
+    () =>
+      seatIds.slice(0, quantity).map((id, i) => ({ id, label: `Ingresso ${i + 1}` })),
+    [seatIds, quantity],
+  );
+
+  const halfCount = halfPriceClaims.length;
+  const totalPrice = (quantity - halfCount) * price + halfCount * (price / 2);
 
   const increment = () => setQuantity((q) => Math.min(q + 1, maxQuantity));
   const decrement = () => setQuantity((q) => Math.max(q - 1, 1));
 
   const handleReserve = () => {
-    // Select the first N available seat IDs
-    const selected = seatIds.slice(0, quantity);
-    onReserve(selected);
+    onReserve(
+      chosen.map((c) => c.id),
+      halfPriceClaims,
+    );
   };
 
   return (
@@ -67,18 +85,34 @@ export function GeneralAdmissionSelector({
       <div className="text-center mb-6">
         <span className="text-board-navy/60 text-sm">Total: </span>
         <span className="font-display text-2xl font-bold text-board-crimson">
-          {currency} {totalPrice.toFixed(2)}
+          {formatMoney(totalPrice)}
         </span>
       </div>
+
+      {halfPriceEnabled && (
+        <HalfPriceSelector
+          seats={chosen}
+          price={price}
+          currency="BRL"
+          onChange={(claims, valid) => {
+            setHalfPriceClaims(claims);
+            setHalfPriceValid(valid);
+          }}
+        />
+      )}
 
       {/* Reserve button */}
       <motion.button
         whileTap={{ scale: 0.97 }}
         onClick={handleReserve}
-        disabled={isReserving || availableCount === 0}
-        className="btn-primary w-full disabled:opacity-50"
+        disabled={isReserving || availableCount === 0 || !halfPriceValid}
+        className="btn-primary w-full mt-4 disabled:opacity-50"
       >
-        {isReserving ? 'Reservando...' : `Reservar ${quantity} ingresso${quantity > 1 ? 's' : ''}`}
+        {isReserving
+          ? 'Reservando...'
+          : !halfPriceValid
+            ? 'Complete os dados da meia-entrada'
+            : `Reservar ${quantity} ingresso${quantity > 1 ? 's' : ''}`}
       </motion.button>
     </div>
   );
