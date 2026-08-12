@@ -9,6 +9,7 @@ import { EventsPage } from './pages/EventsPage';
 import { EventDetailPage } from './pages/EventDetailPage';
 import { PaymentPage } from './pages/PaymentPage';
 import { MyTicketsPage } from './pages/MyTicketsPage';
+import { TicketDetailPage } from './pages/TicketDetailPage';
 import { OrganizerDashboard } from './pages/OrganizerDashboard';
 import { GateValidationPage } from './pages/GateValidationPage';
 
@@ -32,6 +33,14 @@ export function App() {
           element={
             <ProtectedRoute allowedRoles={['client']}>
               <MyTicketsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="my-tickets/:ticketId"
+          element={
+            <ProtectedRoute allowedRoles={['client']}>
+              <TicketDetailPage />
             </ProtectedRoute>
           }
         />

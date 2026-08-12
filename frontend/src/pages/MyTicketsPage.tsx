@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import QRCode from 'react-qr-code';
@@ -128,8 +129,11 @@ export function MyTicketsPage() {
                     </p>
 
                     {/* Actions */}
-                    {ticket.status === 'active' && (
-                      <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
+                      <Link to={`/my-tickets/${ticket.id}`} className="btn-primary text-sm py-2 px-4">
+                        Abrir ingresso
+                      </Link>
+                      {ticket.status === 'active' && (
                         <button
                           onClick={() => handleShare(ticket.id)}
                           disabled={sharing === ticket.id}
@@ -137,8 +141,8 @@ export function MyTicketsPage() {
                         >
                           {sharing === ticket.id ? 'Gerando...' : 'Compartilhar'}
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {/* Share link */}
                     {shareLink?.ticketId === ticket.id && (
