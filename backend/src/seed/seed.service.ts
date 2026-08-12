@@ -5,6 +5,31 @@ import * as bcrypt from 'bcryptjs';
 import { User, UserRole } from '../user/entities/user.entity';
 import { Event, EventStatus, SeatingType } from '../event/entities/event.entity';
 import { Seat, SeatStatus } from '../event/entities/seat.entity';
+import { CatalogService } from '../event/catalog/catalog.service';
+
+/** Shape of a seeded event, whether it came from the catalogue or the fallback. */
+interface EventDefinition {
+  title: string;
+  description: string;
+  date: Date;
+  venueName: string;
+  venueAddress: string;
+  venueLat: number | null;
+  venueLng: number | null;
+  venueCity: string | null;
+  capacity: number;
+  seatingType: SeatingType;
+  seatMapConfig: {
+    sections?: Array<{ name: string; rows: number; seatsPerRow: number }>;
+    generalAdmission?: { name: string; capacity: number };
+  };
+  price: number;
+  currency: string;
+  status: EventStatus;
+  imageUrl?: string | null;
+  externalId?: string | null;
+  externalSource?: string | null;
+}
 
 /**
  * Seed service that populates the database with initial development data.
@@ -50,7 +75,115 @@ export class SeedService implements OnApplicationBootstrap {
     private readonly eventRepo: Repository<Event>,
     @InjectRepository(Seat)
     private readonly seatRepo: Repository<Seat>,
+    private readonly catalogService: CatalogService,
   ) {}
+
+  /**
+   * Build seed events from the real Ticketmaster/TMDb catalogue.
+   *
+   * The enunciado is explicit that an organizer builds an event *from an
+   * external catalogue*, so the seeded storefront should look like that
+   * happened — real names, real venues, real artwork. A hardcoded list also
+   * meant every event had `imageUrl: null` and the whole shop rendered as grey
+   * rectangles.
+   *
+   * What comes from the API: title, description, image, venue, city, coords.
+   * What does NOT: price, capacity and seating — the catalogue has no idea how
+   * many chairs the organizer has or what they want to charge. Same rule the
+   * wizard follows.
+   *
+   * Returns `[]` on any failure — the static list then takes over, so a machine
+   * without network (or a burned API quota) still gets a usable seed.
+   */
+  private async buildEventsFromCatalog(): Promise<EventDefinition[]> {
+    const [shows, movies] = await Promise.allSettled([
+      this.catalogService.searchTicketmaster({ countryCode: 'BR', size: 20 }),
+      this.catalogService.nowPlaying(),
+    ]);
+
+    const showItems = shows.status === 'fulfilled' ? shows.value.items : [];
+    const movieItems = movies.status === 'fulfilled' ? movies.value.items : [];
+
+    if (showItems.length === 0 && movieItems.length === 0) {
+      this.logger.warn(
+        'Catálogo externo indisponível no seed — usando a lista estática de eventos.',
+      );
+      return [];
+    }
+
+    const definitions: EventDefinition[] = [];
+
+    // ── Shows: seated venues, priced like arena tickets ──────────────────
+    showItems.slice(0, 8).forEach((item, i) => {
+      const apiDate = item.date ? new Date(item.date) : null;
+      const isUsableDate = apiDate && !Number.isNaN(apiDate.getTime()) && apiDate > new Date();
+
+      const rows = 8 + (i % 5);
+      const seatsPerRow = 12 + (i % 4);
+
+      definitions.push({
+        title: item.name,
+        description:
+          item.description ||
+          `${item.name} — evento importado do catálogo Ticketmaster${item.venueCity ? `, em ${item.venueCity}` : ''}.`,
+        date: isUsableDate ? apiDate! : this.daysFromNow(7 + i * 3),
+        venueName: item.venue || 'Local a confirmar',
+        venueAddress: item.venueAddress || item.venueCity || 'Endereço a confirmar',
+        venueLat: item.venueLat ?? null,
+        venueLng: item.venueLng ?? null,
+        venueCity: item.venueCity || null,
+        capacity: rows * seatsPerRow,
+        seatingType: SeatingType.NUMBERED,
+        seatMapConfig: { sections: [{ name: 'Plateia', rows, seatsPerRow }] },
+        price: 90 + i * 25,
+        currency: 'BRL',
+        status: EventStatus.PUBLISHED,
+        imageUrl: item.image,
+        externalId: item.externalId,
+        externalSource: item.source,
+      });
+    });
+
+    // ── Movies: cinema sessions. The API date is the theatrical release,
+    //    never the session — the organizer schedules that. ────────────────
+    movieItems.slice(0, 6).forEach((item, i) => {
+      const rows = 6;
+      const seatsPerRow = 10 + (i % 3);
+
+      definitions.push({
+        title: `${item.name} — Sessão Especial`,
+        description:
+          item.description || `Sessão de ${item.name}, em cartaz nos cinemas brasileiros.`,
+        date: this.daysFromNow(2 + i * 2),
+        venueName: 'Cine Belas Artes',
+        venueAddress: 'R. da Consolação, 2423 - Cerqueira César, São Paulo - SP',
+        venueLat: -23.5544,
+        venueLng: -46.6626,
+        venueCity: 'São Paulo',
+        capacity: rows * seatsPerRow,
+        seatingType: SeatingType.NUMBERED,
+        seatMapConfig: { sections: [{ name: `Sala ${i + 1}`, rows, seatsPerRow }] },
+        price: 30 + (i % 3) * 10,
+        currency: 'BRL',
+        status: EventStatus.PUBLISHED,
+        imageUrl: item.image,
+        externalId: item.externalId,
+        externalSource: item.source,
+      });
+    });
+
+    this.logger.log(
+      `Catálogo externo: ${showItems.length} shows e ${movieItems.length} filmes disponíveis — ${definitions.length} eventos montados.`,
+    );
+
+    return definitions;
+  }
+
+  private daysFromNow(days: number): Date {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d;
+  }
 
   async run(): Promise<void> {
     const userCount = await this.userRepo.count();
@@ -106,8 +239,10 @@ export class SeedService implements OnApplicationBootstrap {
       return d;
     };
 
-    // ─── Event Definitions ──────────────────────────────────────────────
-    const eventDefinitions = [
+    // ─── Static fallback ────────────────────────────────────────────────
+    // Used when the external catalogue is unreachable, so a machine offline (or
+    // with the daily Ticketmaster quota burned) still gets a usable seed.
+    const fallbackDefinitions: EventDefinition[] = [
       // ── LIVE NOW (1) ──────────────────────────────────────────────────
       // Started 30 min ago, so its entry window (-1h to +7h) is open the
       // moment the seed runs. Without this, every other seeded event is days
@@ -452,6 +587,24 @@ export class SeedService implements OnApplicationBootstrap {
       },
     ];
 
+    // ─── Decide where the catalogue comes from ──────────────────────────
+    //
+    // The live event is always static: it has to start 30 min ago for the gate
+    // flow to be demonstrable, and no external API will hand us that.
+    const liveEvent = fallbackDefinitions[0];
+    const catalogDefinitions = await this.buildEventsFromCatalog();
+
+    const eventDefinitions =
+      catalogDefinitions.length > 0
+        ? [liveEvent, ...catalogDefinitions]
+        : fallbackDefinitions;
+
+    this.logger.log(
+      catalogDefinitions.length > 0
+        ? `Semeando com ${catalogDefinitions.length} eventos do catálogo externo + 1 ao vivo.`
+        : `Semeando com a lista estática (${fallbackDefinitions.length} eventos).`,
+    );
+
     // ─── Create Events & Seats ──────────────────────────────────────────
     let totalSeatsCreated = 0;
 
@@ -459,7 +612,8 @@ export class SeedService implements OnApplicationBootstrap {
       const event = this.eventRepo.create({
         organizerId: organizer.id,
         ...def,
-        externalSource: 'seed',
+        // Catalogue-derived events carry their real source; static ones say so
+        externalSource: def.externalSource ?? 'seed',
       });
 
       const savedEvent = await this.eventRepo.save(event);
