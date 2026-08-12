@@ -48,7 +48,10 @@ export function useEventDetail(id: string | undefined) {
 }
 
 /**
- * Fetch available seats for an event from GET /reservations/seats/:eventId.
+ * Fetch all seats of an event (with status) from GET /reservations/seats/:eventId.
+ *
+ * Live updates arrive over WebSocket via `useSeatSocket`; the slow interval here
+ * is only a safety net for when the socket is down (SPEC_CP10 AC-E5).
  */
 export function useAvailableSeats(eventId: string | undefined) {
   return useQuery({
@@ -59,6 +62,6 @@ export function useAvailableSeats(eventId: string | undefined) {
       return res.data;
     },
     enabled: !!eventId,
-    refetchInterval: 30000, // Refetch every 30s as fallback
+    refetchInterval: 120000,
   });
 }
