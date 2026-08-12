@@ -17,3 +17,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Scratch de execucao local
+backend/_*.txt
+frontend/tsconfig.tsbuildinfo
