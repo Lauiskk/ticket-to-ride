@@ -368,6 +368,24 @@ Duas flags existem para o **primeiro** deploy num banco vazio:
 O seed é idempotente — sai na hora se já existir usuário. Depois do primeiro boot
 bem-sucedido, o recomendado é desligar `DB_SYNCHRONIZE` (ver *Limitações*).
 
+#### 2b. Login com Google — o passo que não está no código
+
+O endereço de retorno do Google precisa existir **nos dois lados**:
+
+| Onde | Valor |
+|---|---|
+| Railway (`GOOGLE_CALLBACK_URL`) | `https://<sua-api>.up.railway.app/auth/google/callback` |
+| Google Cloud Console → *Credenciais* → seu OAuth Client → **URIs de redirecionamento autorizados** | o mesmo endereço, idêntico |
+
+Se faltar no Railway, a API agora deriva o endereço do domínio público e registra
+aviso no boot — antes ela mandava o usuário para uma tela do Google dizendo
+*"Missing required parameter: redirect_uri"*, um erro nosso com cara de erro deles.
+
+Se faltar no Google Console, o erro é `redirect_uri_mismatch`. Esse só se resolve
+lá: é o Google conferindo se o endereço foi autorizado por quem é dono do app.
+Mantenha também `http://localhost:3000/auth/google/callback` na lista, para o
+desenvolvimento local continuar funcionando.
+
 #### 3. Frontend (Vercel)
 
 O repositório já traz `frontend/vercel.json` (framework, build e o rewrite de SPA — sem
