@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GiDiceSixFacesTwo } from 'react-icons/gi';
 import { api } from '../lib/api';
 import { EventWizard } from '../components/organizer/EventWizard';
-import { EventMetricsPanel } from '../components/organizer/EventMetricsPanel';
+import { useEventActions } from '../hooks/useEventActions';
 import {
   EVENT_STATUS_LABEL,
   EVENT_STATUS_CLASS,
@@ -24,11 +25,8 @@ import type { Event } from '../types';
 export function OrganizerDashboard() {
   const queryClient = useQueryClient();
   const [showWizard, setShowWizard] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
   /** Último evento criado, para explicar que ele nasceu rascunho. */
   const [justCreated, setJustCreated] = useState<{ id: string; title: string } | null>(null);
-  const [error, setError] = useState('');
 
   const { data: events, isLoading } = useQuery({
     queryKey: ['my-events'],
@@ -40,46 +38,7 @@ export function OrganizerDashboard() {
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['my-events'] });
 
-
-  const putOnSale = async (eventId: string) => {
-    setBusyId(eventId);
-    setError('');
-    try {
-      await api.patch(`/events/${eventId}/publish`);
-      refresh();
-    } catch (err: any) {
-      setError(err.message || 'Não foi possível colocar à venda.');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  /**
-   * Drafts and live events are cancelled by the same endpoint, but they are not
-   * the same act: a draft has no buyers, so it is simply discarded. Calling that
-   * "cancelar o evento" would suggest someone out there needs a refund.
-   */
-  const cancelEvent = async (eventId: string, title: string, status: Event['status']) => {
-    const isDraft = status === 'draft';
-
-    const confirmed = confirm(
-      isDraft
-        ? `Descartar o rascunho "${title}"? Ele não está à venda, então ninguém é afetado.`
-        : `Cancelar "${title}"? Quem já comprou precisará ser reembolsado.`,
-    );
-    if (!confirmed) return;
-
-    setBusyId(eventId);
-    setError('');
-    try {
-      await api.patch(`/events/${eventId}/cancel`);
-      await refresh();
-    } catch (err: any) {
-      setError(err.message || (isDraft ? 'Não foi possível descartar.' : 'Não foi possível cancelar.'));
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const { putOnSale, cancelEvent, busyId, error } = useEventActions();
 
   const onSale = events?.filter((e) => e.status === 'published') ?? [];
   const drafts = events?.filter((e) => e.status === 'draft') ?? [];
@@ -163,26 +122,64 @@ export function OrganizerDashboard() {
             ))}
           </div>
         ) : !events || events.length === 0 ? (
-          <div className="card-game p-10 text-center">
-            <p className="text-board-navy/60 text-lg mb-2">Nenhum evento ainda.</p>
-            <p className="text-board-navy/40 text-sm mb-5">
-              Comece a partir de um show ou filme do catálogo — ou monte do zero.
+          /* Uma lista vazia não ensina nada. Aqui o organizador novo descobre
+             de onde vêm os eventos e o que acontece depois de criar um
+             (SPEC_CP17 RF-6). */
+          <div className="card-game p-10">
+            <p className="font-display text-xl font-semibold text-board-navy text-center mb-1">
+              Sua bilheteria está vazia
             </p>
-            <button onClick={() => setShowWizard(true)} className="btn-primary">
-              Criar o primeiro evento
-            </button>
+            <p className="text-board-navy/50 text-sm text-center mb-7">
+              Os eventos aqui são <strong>seus</strong>: você define a casa, o preço e a política
+              de meia-entrada.
+            </p>
+
+            <ol className="max-w-md mx-auto space-y-4 mb-8">
+              {[
+                {
+                  title: 'Busque um show ou filme',
+                  body: 'O catálogo do Ticketmaster e do TMDb preenche título, foto, local e data para você.',
+                },
+                {
+                  title: 'Monte a casa',
+                  body: 'Setores com fileiras (lugares marcados) ou por quantidade (pista), e o preço do ingresso.',
+                },
+                {
+                  title: 'Coloque à venda',
+                  body: 'O evento nasce como rascunho e só aparece para os clientes quando você mandar.',
+                },
+              ].map((step, i) => (
+                <li key={step.title} className="flex gap-3">
+                  <span className="flex-shrink-0 w-7 h-7 rounded-full bg-board-gold text-board-navy font-display font-bold text-sm flex items-center justify-center">
+                    {i + 1}
+                  </span>
+                  <div>
+                    <p className="font-medium text-board-navy text-sm">{step.title}</p>
+                    <p className="text-board-navy/50 text-sm">{step.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            <div className="text-center">
+              <button onClick={() => setShowWizard(true)} className="btn-primary">
+                Criar o primeiro evento
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-4">
             {events.map((event) => {
-              const isOpen = expandedId === event.id;
               return (
                 <div key={event.id} className="card-game p-6">
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <h2 className="font-display text-lg font-semibold text-board-navy leading-tight">
+                      <Link
+                        to={`/organizer/events/${event.id}`}
+                        className="font-display text-lg font-semibold text-board-navy leading-tight hover:text-board-crimson transition-colors"
+                      >
                         {event.title}
-                      </h2>
+                      </Link>
                       <p className="text-board-navy/55 text-sm mt-1">
                         {new Date(event.date).toLocaleString('pt-BR', {
                           day: '2-digit',
@@ -240,17 +237,15 @@ export function OrganizerDashboard() {
                     </div>
                   </div>
 
-                  {event.status !== 'draft' && (
-                    <button
-                      onClick={() => setExpandedId(isOpen ? null : event.id)}
-                      aria-expanded={isOpen}
-                      className="mt-3 text-sm text-board-crimson font-medium hover:underline"
-                    >
-                      {isOpen ? 'Ocultar vendas ▲' : 'Ver vendas ▼'}
-                    </button>
-                  )}
-
-                  {isOpen && <EventMetricsPanel eventId={event.id} />}
+                  {/* As vendas moram na tela do evento, junto com o mapa de
+                      ocupação — dois lugares mostrando os mesmos números é um
+                      lugar a mais para eles discordarem (SPEC_CP17 RF-5). */}
+                  <Link
+                    to={`/organizer/events/${event.id}`}
+                    className="inline-block mt-3 text-sm text-board-crimson font-medium hover:underline"
+                  >
+                    {event.status === 'draft' ? 'Conferir a casa →' : 'Ver vendas e ocupação →'}
+                  </Link>
                 </div>
               );
             })}

@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { HalfPriceSelector } from './HalfPriceSelector';
 import { formatMoney } from '../lib/eventStatus';
+import { groupSeats } from '../lib/seatGroups';
 import type { Seat, HalfPriceClaim } from '../types';
 
 
@@ -80,24 +81,7 @@ export function SeatMap({
   const [halfPriceClaims, setHalfPriceClaims] = useState<HalfPriceClaim[]>([]);
   const [halfPriceValid, setHalfPriceValid] = useState(true);
 
-  // Group seats by section and row
-  const sections = useMemo(() => {
-    const map = new Map<string, Map<string, Seat[]>>();
-    for (const seat of seats) {
-      if (!map.has(seat.section)) map.set(seat.section, new Map());
-      const section = map.get(seat.section)!;
-      const rowKey = seat.row || 'GA';
-      if (!section.has(rowKey)) section.set(rowKey, []);
-      section.get(rowKey)!.push(seat);
-    }
-    // Sort seats in each row by number
-    for (const section of map.values()) {
-      for (const [key, rowSeats] of section.entries()) {
-        section.set(key, rowSeats.sort((a, b) => Number(a.number || 0) - Number(b.number || 0)));
-      }
-    }
-    return map;
-  }, [seats]);
+  const sections = useMemo(() => groupSeats(seats), [seats]);
 
   // Stable identity: a new function every render would defeat the memo on all
   // thousand seats.

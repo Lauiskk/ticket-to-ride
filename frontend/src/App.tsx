@@ -32,6 +32,9 @@ const TicketDetailPage = lazy(() =>
 const OrganizerDashboard = lazy(() =>
   import('./pages/OrganizerDashboard').then((m) => ({ default: m.OrganizerDashboard })),
 );
+const OrganizerEventPage = lazy(() =>
+  import('./pages/OrganizerEventPage').then((m) => ({ default: m.OrganizerEventPage })),
+);
 const GateValidationPage = lazy(() =>
   import('./pages/GateValidationPage').then((m) => ({ default: m.GateValidationPage })),
 );
@@ -104,6 +107,15 @@ export function App() {
           element={
             <ProtectedRoute allowedRoles={['organizer']}>
               <OrganizerDashboard />
+            </ProtectedRoute>
+          }
+        />
+        {/* O evento visto por quem produz: ocupação e bilheteria (SPEC_CP17 RF-2) */}
+        <Route
+          path="organizer/events/:id"
+          element={
+            <ProtectedRoute allowedRoles={['organizer']}>
+              <OrganizerEventPage />
             </ProtectedRoute>
           }
         />
