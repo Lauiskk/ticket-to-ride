@@ -40,6 +40,24 @@ type Errors = Record<string, string>;
 
 const STEPS = ['Base', 'Detalhes', 'Lugares e preço', 'Revisão'];
 
+/**
+ * Two tabs because they are two different questions, answered by two different
+ * APIs: "which real shows exist" (Ticketmaster, which knows venues) and "what
+ * is in cinemas right now" (TMDb `now_playing`, which knows the listings).
+ * A single search box could not answer either well.
+ */
+type CatalogTab = 'shows' | 'now-playing';
+
+const CLASSIFICATIONS = ['Music', 'Arts & Theatre', 'Sports', 'Film', 'Miscellaneous'];
+
+const CLASSIFICATION_LABEL: Record<string, string> = {
+  Music: 'Shows e música',
+  'Arts & Theatre': 'Teatro e artes',
+  Sports: 'Esportes',
+  Film: 'Cinema',
+  Miscellaneous: 'Outros',
+};
+
 /** Local datetime string for <input type="datetime-local"> min attribute. */
 function nowLocalISO(): string {
   const d = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
@@ -53,10 +71,17 @@ export function EventWizard({ onCreated, onClose }: Props) {
   const [submitError, setSubmitError] = useState('');
 
   // Step 0 — external catalogue
+  const [tab, setTab] = useState<CatalogTab>('shows');
   const [query, setQuery] = useState('');
+  const [catalogCity, setCatalogCity] = useState('');
+  const [classification, setClassification] = useState('');
   const [results, setResults] = useState<CatalogItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [source, setSource] = useState<{ id: string; name: string } | null>(null);
+  const [venueLat, setVenueLat] = useState<number | null>(null);
+  const [venueLng, setVenueLng] = useState<number | null>(null);
 
   // Step 1 — details
   const [title, setTitle] = useState('');
@@ -137,14 +162,24 @@ export function EventWizard({ onCreated, onClose }: Props) {
 
   // ─── Catalogue ────────────────────────────────────────────────────────────
 
-  const search = async () => {
-    if (!query.trim()) return;
+  const search = async (nextTab: CatalogTab = tab) => {
+    // "Em cartaz" needs no query — that is the whole point of the tab
+    if (nextTab === 'shows' && !query.trim() && !catalogCity && !classification) return;
+
     setSearching(true);
     setSearched(true);
     try {
-      const res = await api.get<{ items: CatalogItem[] }>(
-        `/catalog/search?query=${encodeURIComponent(query)}`,
-      );
+      const params = new URLSearchParams();
+      if (nextTab === 'now-playing') {
+        params.set('source', 'now-playing');
+      } else {
+        params.set('source', 'ticketmaster');
+        if (query.trim()) params.set('query', query.trim());
+        if (catalogCity.trim()) params.set('city', catalogCity.trim());
+        if (classification) params.set('classificationName', classification);
+      }
+
+      const res = await api.get<{ items: CatalogItem[] }>(`/catalog/search?${params}`);
       setResults(res.data.items || []);
     } catch {
       setResults([]);
@@ -153,16 +188,41 @@ export function EventWizard({ onCreated, onClose }: Props) {
     }
   };
 
+  const switchTab = (next: CatalogTab) => {
+    setTab(next);
+    setResults([]);
+    setSearched(false);
+    if (next === 'now-playing') search(next);
+  };
+
+  /**
+   * Carry over everything the API already knows so the organizer types as
+   * little as possible. What it does NOT carry: the date for a film (TMDb gives
+   * the theatrical release, not the session) and never price or capacity —
+   * those belong to whoever is running the room.
+   */
   const useCatalogItem = (item: CatalogItem) => {
     setTitle(item.name);
     setDescription(item.description || '');
-    if (item.date) {
+    setImageUrl(item.image ?? null);
+    setSource({ id: item.externalId, name: item.source });
+
+    if (item.source === 'ticketmaster' && item.date) {
       const d = new Date(item.date);
       if (!Number.isNaN(d.getTime()) && d.getTime() > Date.now()) {
         setDate(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
       }
     }
+
     if (item.venue) setVenueName(item.venue);
+    if (item.venueAddress) setVenueAddress(item.venueAddress);
+    if (item.venueCity) setVenueCity(item.venueCity);
+    setVenueLat(item.venueLat ?? null);
+    setVenueLng(item.venueLng ?? null);
+
+    // A film session is numbered seating far more often than not
+    if (item.source === 'tmdb') setSeatingType('numbered');
+
     setStep(1);
   };
 
@@ -180,6 +240,10 @@ export function EventWizard({ onCreated, onClose }: Props) {
         venueName: venueName.trim(),
         venueAddress: venueAddress.trim(),
         venueCity: venueCity.trim(),
+        ...(venueLat !== null ? { venueLat } : {}),
+        ...(venueLng !== null ? { venueLng } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+        ...(source ? { externalId: source.id, externalSource: source.name } : {}),
         capacity,
         seatingType,
         price: Number(price),
@@ -267,49 +331,130 @@ export function EventWizard({ onCreated, onClose }: Props) {
           {/* ─── Step 0: catalogue ─────────────────────────────────────── */}
           {step === 0 && (
             <div>
-              <p className="text-board-navy/60 mb-4 text-sm">
-                Busque um show no Ticketmaster ou um filme no TMDb para partir de um título real —
-                ou pule e monte do zero.
-              </p>
-              <div className="flex gap-2 mb-4">
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && search()}
-                  placeholder="Ex.: Coldplay, Duna, Wicked..."
-                  className="flex-1 px-4 py-3 rounded-lg border border-board-parchment-dark bg-white focus:outline-none focus:ring-2 focus:ring-board-gold/40"
-                />
-                <button onClick={search} disabled={searching} className="btn-primary whitespace-nowrap">
-                  {searching ? 'Buscando...' : 'Buscar'}
-                </button>
-              </div>
-
-              <div className="space-y-2 max-h-72 overflow-y-auto">
-                {results.map((item) => (
+              {/* Two sources, two questions */}
+              <div className="flex gap-1 p-1 bg-board-parchment-dark/40 rounded-lg mb-4">
+                {(
+                  [
+                    { value: 'shows' as const, label: 'Shows e eventos' },
+                    { value: 'now-playing' as const, label: 'Filmes em cartaz' },
+                  ]
+                ).map((t) => (
                   <button
-                    key={`${item.source}-${item.externalId}`}
-                    onClick={() => useCatalogItem(item)}
-                    className="w-full text-left flex gap-3 p-3 border border-board-parchment-dark rounded-lg hover:border-board-gold hover:bg-board-parchment/40 transition-colors"
+                    key={t.value}
+                    onClick={() => switchTab(t.value)}
+                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${
+                      tab === t.value
+                        ? 'bg-white text-board-navy shadow-sm'
+                        : 'text-board-navy/50 hover:text-board-navy'
+                    }`}
                   >
-                    {item.image && (
-                      <img
-                        src={item.image}
-                        alt=""
-                        className="w-12 h-16 object-cover rounded flex-shrink-0"
-                      />
-                    )}
-                    <div className="min-w-0">
-                      <p className="font-medium text-board-navy leading-tight">{item.name}</p>
-                      <p className="text-xs text-board-navy/50 mt-0.5">
-                        {item.category}
-                        {item.venue ? ` · ${item.venue}` : ''}
-                        {item.date ? ` · ${new Date(item.date).getFullYear()}` : ''}
-                      </p>
-                    </div>
+                    {t.label}
                   </button>
                 ))}
+              </div>
+
+              {tab === 'shows' ? (
+                <>
+                  <p className="text-board-navy/60 mb-3 text-sm">
+                    Eventos reais no Brasil, via Ticketmaster. O item escolhido preenche local,
+                    endereço, cidade e coordenadas.
+                  </p>
+                  <div className="space-y-2 mb-4">
+                    <div className="flex gap-2">
+                      <input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && search()}
+                        placeholder="Ex.: Coldplay, Rosalía, stand-up..."
+                        className="flex-1 px-4 py-3 rounded-lg border border-board-parchment-dark bg-white focus:outline-none focus:ring-2 focus:ring-board-gold/40"
+                      />
+                      <button
+                        onClick={() => search()}
+                        disabled={searching}
+                        className="btn-primary whitespace-nowrap"
+                      >
+                        {searching ? '...' : 'Buscar'}
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={catalogCity}
+                        onChange={(e) => setCatalogCity(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && search()}
+                        placeholder="Cidade (opcional)"
+                        className="flex-1 px-3 py-2 rounded-lg border border-board-parchment-dark bg-white text-sm focus:outline-none focus:ring-2 focus:ring-board-gold/40"
+                      />
+                      <select
+                        value={classification}
+                        onChange={(e) => setClassification(e.target.value)}
+                        className="flex-1 px-3 py-2 rounded-lg border border-board-parchment-dark bg-white text-sm focus:outline-none focus:ring-2 focus:ring-board-gold/40"
+                      >
+                        <option value="">Qualquer categoria</option>
+                        {CLASSIFICATIONS.map((c) => (
+                          <option key={c} value={c}>
+                            {CLASSIFICATION_LABEL[c]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-board-navy/60 mb-4 text-sm">
+                  O que está passando nos cinemas brasileiros agora, via TMDb. A data da sessão é
+                  você quem define — o catálogo só sabe a estreia.
+                </p>
+              )}
+
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {searching && (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-20 rounded-lg bg-board-parchment-dark/30 animate-pulse" />
+                    ))}
+                  </div>
+                )}
+
+                {!searching &&
+                  results.map((item) => (
+                    <button
+                      key={`${item.source}-${item.externalId}`}
+                      onClick={() => useCatalogItem(item)}
+                      className="w-full text-left flex gap-3 p-3 border border-board-parchment-dark rounded-lg hover:border-board-gold hover:bg-board-parchment/40 transition-colors"
+                    >
+                      {item.image ? (
+                        <img
+                          src={item.image}
+                          alt=""
+                          loading="lazy"
+                          className="w-14 h-20 object-cover rounded flex-shrink-0 bg-board-parchment-dark"
+                        />
+                      ) : (
+                        <div className="w-14 h-20 rounded flex-shrink-0 bg-board-parchment-dark flex items-center justify-center text-board-navy/30 text-xs">
+                          sem foto
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-board-navy leading-tight">{item.name}</p>
+                        <p className="text-xs text-board-navy/50 mt-1">{item.category}</p>
+                        {item.venue && (
+                          <p className="text-xs text-board-navy/60 mt-0.5">
+                            📍 {item.venue}
+                            {item.venueCity ? ` · ${item.venueCity}` : ''}
+                          </p>
+                        )}
+                        {item.date && (
+                          <p className="text-xs text-board-navy/40 mt-0.5">
+                            {item.source === 'tmdb' ? 'Estreia: ' : ''}
+                            {new Date(item.date).toLocaleDateString('pt-BR')}
+                          </p>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+
                 {searched && !searching && results.length === 0 && (
-                  <p className="text-board-navy/40 text-sm text-center py-6">
+                  <p className="text-board-navy/40 text-sm text-center py-8">
                     Nada encontrado. Tente outro termo ou monte do zero.
                   </p>
                 )}

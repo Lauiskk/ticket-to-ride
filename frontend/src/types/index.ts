@@ -40,6 +40,8 @@ export interface Event {
   /** Cap on half-price tickets; null = no cap. */
   halfPriceQuota: number | null;
   availableSeats?: number;
+  /** Poster/banner, usually carried over from the external catalogue. */
+  imageUrl: string | null;
   externalId: string | null;
   externalSource: string | null;
   createdAt: string;
@@ -167,8 +169,14 @@ export interface CatalogItem {
   image: string | null;
   category: string;
   description?: string;
+  /** Ticketmaster: real session start. TMDb: theatrical release (informative only). */
   date?: string;
-  venue?: string;
+  venue?: string | null;
+  /** Only Ticketmaster knows these — they pre-fill the event form. */
+  venueCity?: string | null;
+  venueAddress?: string | null;
+  venueLat?: number | null;
+  venueLng?: number | null;
 }
 
 export interface CatalogSearchResult {
