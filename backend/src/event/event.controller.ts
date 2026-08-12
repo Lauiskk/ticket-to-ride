@@ -43,6 +43,20 @@ export class EventController {
 
   // ─── Organizer endpoints ────────────────────────────────────────────────────
 
+  /**
+   * Sales panel for one event (SPEC_CP12 RF-6). Owner-only; someone else's
+   * event answers 404 like the rest of the module, never 403 — a 403 would
+   * confirm the event exists.
+   */
+  @Roles(UserRole.ORGANIZER)
+  @Get(':id/metrics')
+  async metrics(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.eventService.getMetrics(id, user.sub);
+  }
+
   @Roles(UserRole.ORGANIZER)
   @Post()
   async create(

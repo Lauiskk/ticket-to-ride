@@ -6,6 +6,8 @@ import { Seat, SeatStatus } from './entities/seat.entity';
 import { CreateEventDto } from './dto/create-event.dto';
 import { SearchEventsDto, SortBy } from './dto/search-events.dto';
 import { EventResponseDto } from './dto/event-response.dto';
+import { EventMetricsDto } from './dto/event-metrics.dto';
+import { Ticket, TicketStatus } from '../ticket/entities/ticket.entity';
 import { AppError, ErrorCodes } from '../shared/errors';
 import { PaginatedResult } from '../shared/interceptors/response.interceptor';
 
@@ -58,6 +60,9 @@ export class EventService {
       seatMapConfig: dto.sections || dto.sectors ? { sections: dto.sections, sectors: dto.sectors } : null,
       price: dto.price,
       currency: dto.currency.toUpperCase(),
+      // Half-price on unless the organizer explicitly opts out (SPEC_CP12 RF-8)
+      halfPriceEnabled: dto.halfPriceEnabled ?? true,
+      halfPriceQuota: dto.halfPriceQuota ?? null,
       status: EventStatus.DRAFT,
       externalId: dto.externalId || null,
       externalSource: dto.externalSource || null,
@@ -122,6 +127,83 @@ export class EventService {
       order: { createdAt: 'DESC' },
     });
     return events.map((e) => EventResponseDto.fromEntity(e));
+  }
+
+  // ─── Organizer Metrics (SPEC_CP12 RF-6) ───────────────────────────────────
+
+  /**
+   * Sales panel for one event, for its own organizer.
+   *
+   * Deliberately aggregates only. An organizer needs to know how the house is
+   * filling and how much came in — not who bought what. No buyer identity,
+   * e-mail or document ever appears here.
+   */
+  async getMetrics(eventId: string, organizerId: string): Promise<EventMetricsDto> {
+    // Reuses the ownership check — a stranger's event is simply "not found"
+    const event = await this.findOwnedEvent(eventId, organizerId);
+
+    const [seatCounts, sectionRows, revenueRow, ticketsIssued, ticketsValidated, halfPriceTickets] =
+      await Promise.all([
+        this.seatRepo
+          .createQueryBuilder('seat')
+          .select('seat.status', 'status')
+          .addSelect('COUNT(*)', 'count')
+          .where('seat.event_id = :eventId', { eventId })
+          .groupBy('seat.status')
+          .getRawMany<{ status: string; count: string }>(),
+
+        this.seatRepo
+          .createQueryBuilder('seat')
+          .select('seat.section', 'section')
+          .addSelect('COUNT(*)', 'total')
+          .addSelect(`COUNT(*) FILTER (WHERE seat.status = 'sold')`, 'sold')
+          .where('seat.event_id = :eventId', { eventId })
+          .groupBy('seat.section')
+          .orderBy('seat.section', 'ASC')
+          .getRawMany<{ section: string; total: string; sold: string }>(),
+
+        this.seatRepo.manager
+          .createQueryBuilder()
+          .select('COALESCE(SUM(r.total_amount), 0)', 'revenue')
+          .from('reservations', 'r')
+          .where('r.event_id = :eventId', { eventId })
+          .andWhere(`r.status = 'paid'`)
+          .getRawOne<{ revenue: string }>(),
+
+        this.seatRepo.manager.count(Ticket, { where: { eventId } }),
+        this.seatRepo.manager.count(Ticket, { where: { eventId, status: TicketStatus.USED } }),
+        this.seatRepo.manager.count(Ticket, { where: { eventId, isHalfPrice: true } }),
+      ]);
+
+    const countOf = (status: string): number =>
+      Number(seatCounts.find((r) => r.status === status)?.count ?? 0);
+
+    const seatsSold = countOf(SeatStatus.SOLD);
+    const seatsReserved = countOf(SeatStatus.RESERVED);
+    const seatsAvailable = countOf(SeatStatus.AVAILABLE);
+    const seatsTotal = seatsSold + seatsReserved + seatsAvailable;
+
+    return {
+      eventId: event.id,
+      title: event.title,
+      status: event.status,
+      seatsTotal,
+      seatsSold,
+      seatsReserved,
+      seatsAvailable,
+      // AC-11: an event with no seats must not divide by zero
+      occupancyRate: seatsTotal === 0 ? 0 : Math.round((seatsSold / seatsTotal) * 100),
+      revenue: Number(revenueRow?.revenue ?? 0),
+      currency: event.currency,
+      ticketsIssued,
+      ticketsValidated,
+      halfPriceTickets,
+      bySection: sectionRows.map((row) => ({
+        section: row.section,
+        total: Number(row.total),
+        sold: Number(row.sold),
+      })),
+    };
   }
 
   // ─── Browse (Public) ────────────────────────────────────────────────────────

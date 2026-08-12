@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsNumber,
   IsEnum,
+  IsBoolean,
   IsOptional,
   IsObject,
   IsArray,
@@ -111,6 +112,20 @@ export class CreateEventDto {
   @ValidateNested({ each: true })
   @Type(() => GeneralAdmissionSector)
   sectors?: GeneralAdmissionSector[];
+
+  /**
+   * Half-price tickets (SPEC_CP12 RF-8). Defaults to enabled — in Brazil it is
+   * a legal obligation (Lei 12.933/2013), not an opt-in feature.
+   */
+  @IsOptional()
+  @IsBoolean()
+  halfPriceEnabled?: boolean;
+
+  /** Cap on half-price tickets. Omit or null for no cap. */
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  halfPriceQuota?: number | null;
 
   // External catalog reference
   @IsOptional()

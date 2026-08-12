@@ -19,6 +19,8 @@ export class EventResponseDto {
   price: number;
   currency: string;
   status: EventStatus;
+  halfPriceEnabled: boolean;
+  halfPriceQuota: number | null;
   availableSeats?: number;
   externalId: string | null;
   externalSource: string | null;
@@ -40,6 +42,8 @@ export class EventResponseDto {
     dto.price = Number(event.price);
     dto.currency = event.currency;
     dto.status = event.status;
+    dto.halfPriceEnabled = event.halfPriceEnabled ?? true;
+    dto.halfPriceQuota = event.halfPriceQuota ?? null;
     dto.externalId = event.externalId;
     dto.externalSource = event.externalSource;
     dto.createdAt = event.createdAt;
