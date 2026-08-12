@@ -1,0 +1,97 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  DeleteDateColumn,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+  Index,
+} from 'typeorm';
+import { User } from '../../user/entities/user.entity';
+
+export enum EventStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+  CANCELLED = 'cancelled',
+}
+
+export enum SeatingType {
+  NUMBERED = 'numbered',
+  GENERAL_ADMISSION = 'general-admission',
+}
+
+@Entity('events')
+export class Event {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ name: 'organizer_id' })
+  organizerId: string;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'organizer_id' })
+  organizer: User;
+
+  @Column({ length: 200 })
+  title: string;
+
+  @Column({ type: 'text' })
+  description: string;
+
+  @Index('idx_events_date')
+  @Column({ type: 'timestamptz' })
+  date: Date;
+
+  @Column({ name: 'venue_name', length: 200 })
+  venueName: string;
+
+  @Column({ name: 'venue_address', length: 500 })
+  venueAddress: string;
+
+  @Column({ name: 'venue_lat', type: 'float', nullable: true })
+  venueLat: number | null;
+
+  @Column({ name: 'venue_lng', type: 'float', nullable: true })
+  venueLng: number | null;
+
+  @Index('idx_events_venue_city')
+  @Column({ name: 'venue_city', type: 'varchar', length: 100, nullable: true })
+  venueCity: string | null;
+
+  @Column({ type: 'int' })
+  capacity: number;
+
+  @Column({ name: 'seating_type', type: 'enum', enum: SeatingType })
+  seatingType: SeatingType;
+
+  @Column({ name: 'seat_map_config', type: 'jsonb', nullable: true })
+  seatMapConfig: Record<string, unknown> | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2 })
+  price: number;
+
+  @Column({ length: 3 })
+  currency: string;
+
+  @Index('idx_events_status')
+  @Column({ type: 'enum', enum: EventStatus, default: EventStatus.DRAFT })
+  status: EventStatus;
+
+  @Column({ name: 'external_id', type: 'varchar', nullable: true })
+  externalId: string | null;
+
+  @Column({ name: 'external_source', type: 'varchar', nullable: true })
+  externalSource: string | null;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: Date | null;
+}
