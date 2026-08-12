@@ -49,13 +49,18 @@ export class TicketService {
     }
 
     const tickets: Ticket[] = [];
+    const claims = reservation.halfPriceClaims ?? {};
 
     for (const seat of reservation.seats) {
+      // Half-price is decided per seat at checkout (SPEC_CP12 RF-12)
+      const claim = claims[seat.id];
+
       const ticket = await this.generateWithRetry(
         reservation.eventId,
         reservationId,
         reservation.userId,
         `${seat.section}-${seat.row || 'GA'}-${seat.number}`,
+        claim,
       );
       tickets.push(ticket);
     }
@@ -110,13 +115,20 @@ export class TicketService {
     reservationId: string,
     ownerId: string,
     seatIdentifier: string,
+    halfPriceClaim?: { category: string; document: string },
   ): Promise<Ticket> {
     const maxRetries = 3;
     const backoffMs = [1000, 2000, 4000];
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        return await this.generateSingleTicket(eventId, reservationId, ownerId, seatIdentifier);
+        return await this.generateSingleTicket(
+          eventId,
+          reservationId,
+          ownerId,
+          seatIdentifier,
+          halfPriceClaim,
+        );
       } catch (error) {
         if (attempt < maxRetries) {
           this.logger.warn(
@@ -141,6 +153,7 @@ export class TicketService {
     reservationId: string,
     ownerId: string,
     seatIdentifier: string,
+    halfPriceClaim?: { category: string; document: string },
   ): Promise<Ticket> {
     const ticketId = uuidv4();
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -175,6 +188,11 @@ export class TicketService {
       qrImageFormat: format,
       hmacSignature: signature,
       status: TicketStatus.ACTIVE,
+      // Half-price stays OUT of the signed payload on purpose: the QR must carry
+      // no PII (Req 9.4), and the gate reads these from the database anyway.
+      isHalfPrice: !!halfPriceClaim,
+      halfPriceCategory: halfPriceClaim?.category ?? null,
+      holderDocument: halfPriceClaim?.document ?? null,
     });
 
     return this.ticketRepo.save(ticket);

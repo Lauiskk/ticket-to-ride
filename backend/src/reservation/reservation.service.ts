@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, In } from 'typeorm';
+import { Repository, DataSource, In, EntityManager } from 'typeorm';
 import { Reservation, ReservationStatus } from './entities/reservation.entity';
 import { Seat, SeatStatus } from '../event/entities/seat.entity';
 import { Event } from '../event/entities/event.entity';
@@ -96,8 +96,21 @@ export class ReservationService {
         throw new SeatUnavailableError(unavailable[0].id);
       }
 
-      // Calculate total price
-      const totalAmount = Number(event.price) * dto.seatIds.length;
+      // ─── Half-price (SPEC_CP12 RF-9..RF-11) ─────────────────────────────
+      // Validated and priced inside the transaction, so two simultaneous
+      // buyers cannot both slip past the last slot of the quota.
+      const halfPriceClaims = await this.resolveHalfPriceClaims(
+        queryRunner.manager,
+        event,
+        dto,
+      );
+
+      // Price is always derived from the event — the client only says WHICH
+      // seats are half-price, never what anything costs (RF-10, AC-2).
+      const fullPrice = Number(event.price);
+      const halfCount = halfPriceClaims ? Object.keys(halfPriceClaims).length : 0;
+      const fullCount = dto.seatIds.length - halfCount;
+      const totalAmount = fullPrice * fullCount + (fullPrice / 2) * halfCount;
 
       // Set expiration (Req 7.3)
       const expiresAt = new Date();
@@ -119,6 +132,7 @@ export class ReservationService {
         totalAmount,
         currency: event.currency,
         expiresAt,
+        halfPriceClaims,
       });
 
       const savedReservation = await queryRunner.manager.save(Reservation, reservation);
@@ -159,6 +173,92 @@ export class ReservationService {
       where: { eventId },
       order: { section: 'ASC', row: 'ASC', number: 'ASC' },
     });
+  }
+
+  // ─── Half-price resolution (SPEC_CP12) ────────────────────────────────────
+
+  /**
+   * Validate the half-price claims and turn them into the seat-keyed map stored
+   * on the reservation. Returns `null` when there are no claims.
+   *
+   * Runs on the transaction's manager on purpose: the quota check has to see the
+   * same snapshot as the seat locks, otherwise two buyers racing for the last
+   * half-price slot both pass (RNF-1).
+   */
+  private async resolveHalfPriceClaims(
+    manager: EntityManager,
+    event: Event,
+    dto: CreateReservationDto,
+  ): Promise<Record<string, { category: string; document: string }> | null> {
+    const claims = dto.halfPriceClaims;
+    if (!claims || claims.length === 0) return null;
+
+    if (!event.halfPriceEnabled) {
+      throw new AppError(
+        'Este evento não oferece meia-entrada.',
+        ErrorCodes.BAD_REQUEST,
+        400,
+      );
+    }
+
+    const requestedSeats = new Set(dto.seatIds);
+    const seen = new Set<string>();
+
+    for (const claim of claims) {
+      if (!requestedSeats.has(claim.seatId)) {
+        throw new AppError(
+          'Meia-entrada declarada para um assento que não está na reserva.',
+          ErrorCodes.BAD_REQUEST,
+          400,
+        );
+      }
+      if (seen.has(claim.seatId)) {
+        throw new AppError(
+          'O mesmo assento foi declarado como meia-entrada mais de uma vez.',
+          ErrorCodes.BAD_REQUEST,
+          400,
+        );
+      }
+      seen.add(claim.seatId);
+    }
+
+    if (event.halfPriceQuota !== null && event.halfPriceQuota !== undefined) {
+      // Count claims on reservations that are still holding or already own their
+      // seats — NOT issued tickets.
+      //
+      // Counting tickets was wrong and real testing proved it: while a buyer is
+      // in checkout their reservation has no tickets yet, so a second buyer saw
+      // a free quota and both got through. A pending reservation is a claim on
+      // the quota exactly like a paid one.
+      const [row] = await manager.query(
+        `SELECT COALESCE(SUM(k.cnt), 0)::int AS taken
+           FROM reservations r
+           CROSS JOIN LATERAL (
+             SELECT count(*) AS cnt FROM jsonb_object_keys(r.half_price_claims)
+           ) k
+          WHERE r.event_id = $1
+            AND r.half_price_claims IS NOT NULL
+            AND r.status IN ('pending_payment', 'paid')`,
+        [event.id],
+      );
+
+      const taken = Number(row?.taken ?? 0);
+
+      if (taken + claims.length > event.halfPriceQuota) {
+        const remaining = Math.max(event.halfPriceQuota - taken, 0);
+        throw new AppError(
+          remaining === 0
+            ? 'As meias-entradas deste evento esgotaram.'
+            : `Restam apenas ${remaining} meia(s)-entrada(s) para este evento.`,
+          ErrorCodes.HALF_PRICE_QUOTA_EXCEEDED,
+          409,
+        );
+      }
+    }
+
+    return Object.fromEntries(
+      claims.map((c) => [c.seatId, { category: c.category, document: c.document }]),
+    );
   }
 
   // ─── Cancel a Pending Reservation (SPEC_CP10 RF-8) ────────────────────────
