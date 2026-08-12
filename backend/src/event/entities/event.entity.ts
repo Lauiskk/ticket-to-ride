@@ -76,6 +76,21 @@ export class Event {
   @Column({ length: 3 })
   currency: string;
 
+  /**
+   * Half-price tickets (SPEC_CP12 RF-8).
+   *
+   * On by default because in Brazil it is not a feature, it is the law
+   * (Lei 12.933/2013 — 40% of tickets at half price for students, people over
+   * 60 and people with disabilities). An organizer can switch it off for events
+   * the law does not cover (private/corporate), but the default is compliance.
+   */
+  @Column({ name: 'half_price_enabled', type: 'boolean', default: true })
+  halfPriceEnabled: boolean;
+
+  /** Maximum half-price tickets for this event. `null` = no cap. */
+  @Column({ name: 'half_price_quota', type: 'int', nullable: true })
+  halfPriceQuota: number | null;
+
   @Index('idx_events_status')
   @Column({ type: 'enum', enum: EventStatus, default: EventStatus.DRAFT })
   status: EventStatus;

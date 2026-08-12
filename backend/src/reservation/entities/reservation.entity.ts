@@ -66,6 +66,16 @@ export class Reservation {
   @Column({ name: 'expires_at', type: 'timestamptz' })
   expiresAt: Date;
 
+  /**
+   * Half-price claims, keyed by seat id (SPEC_CP12 RF-9).
+   *
+   * Kept on the reservation rather than on the seat: the claim belongs to the
+   * purchase, not to the chair — the same seat is full price for the next buyer.
+   * Ticket generation reads this to stamp each ticket.
+   */
+  @Column({ name: 'half_price_claims', type: 'jsonb', nullable: true })
+  halfPriceClaims: Record<string, { category: string; document: string }> | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

@@ -71,6 +71,24 @@ export class Ticket {
   @Column({ name: 'validated_at', type: 'timestamptz', nullable: true })
   validatedAt: Date | null;
 
+  /**
+   * Half-price ticket (SPEC_CP12 RF-12). The gate must ask for the matching
+   * document before letting this holder in.
+   */
+  @Column({ name: 'is_half_price', type: 'boolean', default: false })
+  isHalfPrice: boolean;
+
+  /** `student` | `senior` | `pcd` — null on full-price tickets. */
+  @Column({ name: 'half_price_category', type: 'varchar', nullable: true })
+  halfPriceCategory: string | null;
+
+  /**
+   * Document number declared at checkout. PII: never leaves the API in full —
+   * the gate receives a masked version (see GateService).
+   */
+  @Column({ name: 'holder_document', type: 'varchar', nullable: true })
+  holderDocument: string | null;
+
   @Column({ name: 'validated_by_gate_id', type: 'varchar', nullable: true })
   validatedByGateId: string | null;
 
