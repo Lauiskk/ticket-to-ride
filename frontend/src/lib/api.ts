@@ -51,8 +51,7 @@ class ApiClient {
           body: body ? JSON.stringify(body) : undefined,
         });
         if (!retryRes.ok) throw await this.handleError(retryRes);
-        const data = await retryRes.json();
-        return { data };
+        return { data: await this.parseJson<T>(retryRes) };
       } else {
         // Refresh failed — clear session and redirect
         this.clearSession();
@@ -61,8 +60,34 @@ class ApiClient {
     }
 
     if (!res.ok) throw await this.handleError(res);
-    const data = await res.json();
-    return { data };
+    return { data: await this.parseJson<T>(res) };
+  }
+
+  /**
+   * Parse a JSON response, and say something useful when it isn't JSON.
+   *
+   * This caught a real production outage: `VITE_API_URL` was set to `teste`, so
+   * every call resolved to `/teste/...` on the frontend's own domain. The SPA
+   * rewrite answered with `index.html` — HTTP 200, `text/html` — and the only
+   * symptom the user saw was "Unexpected token '<'". An API base URL pointing
+   * at the app itself is a configuration mistake, and the error should say so.
+   */
+  private async parseJson<T>(res: Response): Promise<T> {
+    const contentType = res.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
+      const sameOrigin = new URL(res.url, window.location.href).origin === window.location.origin;
+
+      throw {
+        status: res.status,
+        code: 'INVALID_API_RESPONSE',
+        message: sameOrigin
+          ? `A API respondeu HTML em vez de JSON (${res.url}). Confira VITE_API_URL — ela parece apontar para o próprio site.`
+          : `A API respondeu em formato inesperado (${contentType || 'sem content-type'}).`,
+      };
+    }
+
+    return res.json() as Promise<T>;
   }
 
   /**

@@ -368,9 +368,15 @@ ele, recarregar em `/events` daria 404) e `frontend/.env.production` com a URL d
 
 1. Vercel → **Add New → Project** → importe `Lauiskk/ticket-to-ride`
 2. **Root Directory:** `frontend`
-3. Em *Environment Variables*, adicione a chave **publicável** da Stripe:
+3. Em *Environment Variables*, adicione **apenas** a chave publicável da Stripe:
    `VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...`
    (sem ela o checkout cai no modo simulado, que ainda fecha o fluxo)
+
+   > ⚠️ **Não crie `VITE_API_URL` na Vercel.** As variáveis do painel sobrescrevem
+   > o `.env.production` do repositório. No primeiro deploy ela foi criada com o
+   > valor `teste`, e todas as chamadas viraram `https://<site>/teste/events` —
+   > que o rewrite de SPA respondia com o `index.html`, HTTP 200. A tela ficava
+   > vazia sem nenhum erro visível. Se ela existir, **apague e redeploy**.
 4. Deploy
 
 #### 4. Fechar o circuito
