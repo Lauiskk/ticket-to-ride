@@ -147,16 +147,15 @@ export class AuthController {
   ) {
     const googleUser = req.user as any;
     const result = await this.authService.handleGoogleLogin(googleUser);
+    const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:5173';
 
     if (result.error) {
       // Email already has a password account — redirect with error
-      const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:5173';
       return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(result.error)}`);
     }
 
-    // Success — set cookie and redirect to frontend
+    // Success — set cookie and redirect to /login with token params (LoginPage handles them)
     this.setTokenCookie(res, result.accessToken!);
-    const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:5173';
-    return res.redirect(`${frontendUrl}?token=${result.accessToken}&user=${encodeURIComponent(JSON.stringify(result.user))}`);
+    return res.redirect(`${frontendUrl}/login?token=${result.accessToken}&user=${encodeURIComponent(JSON.stringify(result.user))}`);
   }
 }

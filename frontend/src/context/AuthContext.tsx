@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api } from '../lib/api';
+import type { AuthResponse } from '../types';
 
 interface User {
   id: string;
@@ -34,7 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const res = await api.post('/auth/login', { email, password });
+    const res = await api.post<AuthResponse>('/auth/login', { email, password });
     const { user: userData, accessToken } = res.data;
     setUser(userData);
     localStorage.setItem('ttr_user', JSON.stringify(userData));
@@ -42,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const register = async (data: { email: string; password: string; name: string; role: string }) => {
-    const res = await api.post('/auth/register', data);
+    const res = await api.post<AuthResponse>('/auth/register', data);
     const { user: userData, accessToken } = res.data;
     setUser(userData);
     localStorage.setItem('ttr_user', JSON.stringify(userData));

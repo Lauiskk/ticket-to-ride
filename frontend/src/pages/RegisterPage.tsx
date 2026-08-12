@@ -5,7 +5,7 @@ import { useAuth, getDefaultRoute } from '../context/AuthContext';
 import { CustomSelect } from '../components/CustomSelect';
 import { PasswordStrength, usePasswordValidation } from '../components/PasswordStrength';
 import { sanitizeInput, sanitizeEmail, validateLength } from '../lib/sanitize';
-import { GiTicket } from 'react-icons/gi';
+import { TrainLogo } from '../components/TrainLogo';
 
 export function RegisterPage() {
   const [name, setName] = useState('');
@@ -72,7 +72,7 @@ export function RegisterPage() {
       >
         <div className="text-center mb-8">
           <Link to="/" className="inline-flex items-center gap-2">
-            <GiTicket className="text-board-gold text-3xl" />
+            <TrainLogo className="w-10 h-10" />
             <span className="font-display text-2xl font-bold text-board-parchment">Ticket to Ride</span>
           </Link>
         </div>

@@ -54,7 +54,7 @@ export class AuthService {
     const existing = await this.userRepo.findOne({ where: { email: dto.email.toLowerCase() } });
     if (existing) {
       throw new AppError(
-        `The submitted 'email' already exists`,
+        `Este email já está cadastrado`,
         ErrorCodes.ALREADY_EXISTS,
         409,
       );
