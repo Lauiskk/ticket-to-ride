@@ -21,6 +21,13 @@ import { PaginatedResult } from '../shared/interceptors/response.interceptor';
  * - Browse: only published + validation-passing events, geo-sort, filters (Req 6.1-6.5)
  * - Never expose organizer internal ID in responses (Req 6.4)
  */
+/**
+ * How long after its start time an event stays buyable. Matches the gate's
+ * entry window (GateService) — while someone can still walk in, someone can
+ * still buy.
+ */
+const EVENT_SALES_GRACE_MS = 7 * 60 * 60 * 1000;
+
 @Injectable()
 export class EventService {
   private readonly logger = new Logger(EventService.name);
@@ -212,10 +219,17 @@ export class EventService {
     const page = dto.page || 1;
     const pageSize = dto.pageSize || 20;
 
+    // An event leaves the catalogue when its doors close, not when it starts.
+    // Filtering on `date > now` hid anything already running — which is exactly
+    // when a box office still sells: at the door, to the people in the queue.
+    // The cutoff mirrors the gate's entry window so the two never disagree
+    // about whether an event is "happening".
+    const stillSelling = new Date(Date.now() - EVENT_SALES_GRACE_MS);
+
     let qb = this.eventRepo
       .createQueryBuilder('event')
       .where('event.status = :status', { status: EventStatus.PUBLISHED })
-      .andWhere('event.date > :now', { now: new Date() })
+      .andWhere('event.date > :cutoff', { cutoff: stillSelling })
       .andWhere('event.deleted_at IS NULL');
 
     // ─── Filters ──────────────────────────────────────────────────────────
