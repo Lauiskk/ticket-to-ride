@@ -11,9 +11,10 @@ export function HomePage() {
   const { lat, lng } = useGeolocation();
 
   const { data: nearbyData } = useEvents(
-    lat && lng ? { lat, lng, radius: 50, pageSize: 6 } : undefined!
+    lat && lng ? { lat, lng, radius: 50, pageSize: 6 } : { pageSize: 6 }
   );
-  const nearbyEvents = lat && lng ? nearbyData?.data : undefined;
+  const nearbyEvents = nearbyData?.data;
+  const sectionTitle = lat && lng ? '📍 Eventos Perto de Você' : '🎫 Eventos em Destaque';
 
   return (
     <div className="overflow-hidden">
@@ -107,7 +108,7 @@ export function HomePage() {
       </section>
 
       {/* ─── Eventos Perto de Você (Carousel) ────────────────────────────── */}
-      {lat && lng && nearbyEvents && nearbyEvents.length > 0 && (
+      {nearbyEvents && nearbyEvents.length > 0 && (
         <section className="py-12 px-4 bg-board-cream">
           <div className="max-w-7xl mx-auto">
             <motion.h2
@@ -116,7 +117,7 @@ export function HomePage() {
               viewport={{ once: true }}
               className="section-title mb-6"
             >
-              📍 Eventos Perto de Você
+              {sectionTitle}
             </motion.h2>
             <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
               {nearbyEvents.map((event) => (

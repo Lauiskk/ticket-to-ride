@@ -1,7 +1,8 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
-import { GiTicket, GiDiceSixFacesTwo, GiTheater } from 'react-icons/gi';
+import { GiDiceSixFacesTwo, GiTheater } from 'react-icons/gi';
+import { TrainLogo } from './TrainLogo';
 
 export function Navbar() {
   const { user, logout } = useAuth();
@@ -22,7 +23,7 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2 group">
-            <GiTicket className="text-board-gold text-2xl group-hover:rotate-12 transition-transform" />
+            <TrainLogo className="w-9 h-9 group-hover:scale-110 transition-transform" />
             <span className="font-display text-xl font-bold text-board-parchment">
               Ticket to Ride
             </span>

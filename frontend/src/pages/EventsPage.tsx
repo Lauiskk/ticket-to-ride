@@ -13,7 +13,8 @@ export function EventsPage() {
 
   useEffect(() => {
     if (lat && lng) {
-      setFilters((prev) => ({ ...prev, lat, lng, radius: 50 }));
+      // Use geo only for sorting (radius=0 means no filter, just sort by proximity)
+      setFilters((prev) => ({ ...prev, lat, lng, radius: 0 }));
     }
   }, [lat, lng]);
 
