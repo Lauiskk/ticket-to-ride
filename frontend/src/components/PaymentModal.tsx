@@ -285,6 +285,8 @@ function StripeCheckout({
   const [errorMessage, setErrorMessage] = useState('');
   const [ticketCount, setTicketCount] = useState(0);
   const [slowWebhook, setSlowWebhook] = useState(false);
+  /** Payment cleared; we are waiting on the ticket itself. */
+  const [issuing, setIssuing] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(() =>
     Math.max(Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000), 0),
   );
@@ -318,11 +320,24 @@ function StripeCheckout({
 
     while (Date.now() < deadline && !cancelled.current) {
       try {
-        const res = await api.get<{ status: string; ticketCount: number }>(
-          `/payments/${reservationId}/status`,
-        );
+        const res = await api.get<{
+          status: string;
+          ticketCount: number;
+          ticketsPending: boolean;
+        }>(`/payments/${reservationId}/status`);
+
         if (res.data.status === 'succeeded') {
           setTicketCount(res.data.ticketCount);
+
+          // Paid, but the ticket is not out yet. The server retries issuing on
+          // every poll, so keep waiting rather than sending the buyer to an
+          // empty "Meus ingressos" — the money already left their card.
+          if (res.data.ticketsPending) {
+            setIssuing(true);
+            await new Promise((r) => setTimeout(r, STATUS_POLL_INTERVAL_MS));
+            continue;
+          }
+
           setState('success');
           return;
         }
@@ -413,11 +428,15 @@ function StripeCheckout({
         {state === 'settling' && (
           <div className="text-center space-y-4 py-8">
             <div className="mx-auto w-14 h-14 rounded-full border-4 border-board-gold/30 border-t-board-gold animate-spin" />
-            <p className="text-board-parchment font-semibold">Confirmando com a operadora</p>
+            <p className="text-board-parchment font-semibold">
+              {issuing ? 'Pagamento aprovado' : 'Confirmando com a operadora'}
+            </p>
             <p className="text-gray-400 text-sm">
-              {slowWebhook
-                ? 'Está demorando mais que o normal. Não feche esta janela.'
-                : 'Emitindo seu ingresso e assinando o QR Code...'}
+              {issuing
+                ? 'Emitindo seu ingresso e assinando o QR Code...'
+                : slowWebhook
+                  ? 'Está demorando mais que o normal. Não feche esta janela.'
+                  : 'Aguardando a confirmação do pagamento...'}
             </p>
           </div>
         )}

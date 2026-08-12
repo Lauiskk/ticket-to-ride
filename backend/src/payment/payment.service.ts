@@ -289,7 +289,7 @@ export class PaymentService {
   async getPaymentStatus(
     userId: string,
     reservationId: string,
-  ): Promise<{ status: PaymentStatus; ticketCount: number }> {
+  ): Promise<{ status: PaymentStatus; ticketCount: number; ticketsPending: boolean }> {
     const payment = await this.paymentRepo.findOne({
       where: { reservationId, userId },
     });
@@ -305,10 +305,45 @@ export class PaymentService {
     const refreshed = await this.paymentRepo.findOne({ where: { id: payment.id } });
     const status = refreshed?.status ?? payment.status;
 
+    let ticketCount = await this.countTickets(reservationId);
+
+    // Paid but no ticket: the generation failed after the money moved.
+    //
+    // Every call site wraps generateForReservation in a try/catch that only
+    // logs, so a failure left the buyer with a charge and an empty "Meus
+    // ingressos" and nobody the wiser. This is the repair pass — safe to run
+    // on every poll because it only fires when the count is zero.
+    if (status === PaymentStatus.SUCCEEDED && ticketCount === 0) {
+      ticketCount = await this.reissueMissingTickets(reservationId);
+    }
+
     return {
       status,
-      ticketCount: await this.countTickets(reservationId),
+      ticketCount,
+      // Lets the checkout say "emitindo seu ingresso" instead of dropping the
+      // buyer on an empty list.
+      ticketsPending: status === PaymentStatus.SUCCEEDED && ticketCount === 0,
     };
+  }
+
+  /**
+   * Generate tickets for a paid reservation that has none.
+   * Returns how many exist afterwards — 0 if the retry failed too.
+   */
+  private async reissueMissingTickets(reservationId: string): Promise<number> {
+    this.logger.warn(
+      `Reservation ${reservationId} is paid with no tickets — reissuing.`,
+    );
+
+    try {
+      await this.ticketService.generateForReservation(reservationId);
+    } catch (err) {
+      this.logger.error(
+        `Ticket reissue failed for reservation ${reservationId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+
+    return this.countTickets(reservationId);
   }
 
   /**

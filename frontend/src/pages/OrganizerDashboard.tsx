@@ -26,6 +26,8 @@ export function OrganizerDashboard() {
   const [showWizard, setShowWizard] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Último evento criado, para explicar que ele nasceu rascunho. */
+  const [justCreated, setJustCreated] = useState<{ id: string; title: string } | null>(null);
   const [error, setError] = useState('');
 
   const { data: events, isLoading } = useQuery({
@@ -37,6 +39,7 @@ export function OrganizerDashboard() {
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['my-events'] });
+
 
   const putOnSale = async (eventId: string) => {
     setBusyId(eventId);
@@ -51,15 +54,28 @@ export function OrganizerDashboard() {
     }
   };
 
-  const cancelEvent = async (eventId: string, title: string) => {
-    if (!confirm(`Cancelar "${title}"? Quem já comprou precisará ser reembolsado.`)) return;
+  /**
+   * Drafts and live events are cancelled by the same endpoint, but they are not
+   * the same act: a draft has no buyers, so it is simply discarded. Calling that
+   * "cancelar o evento" would suggest someone out there needs a refund.
+   */
+  const cancelEvent = async (eventId: string, title: string, status: Event['status']) => {
+    const isDraft = status === 'draft';
+
+    const confirmed = confirm(
+      isDraft
+        ? `Descartar o rascunho "${title}"? Ele não está à venda, então ninguém é afetado.`
+        : `Cancelar "${title}"? Quem já comprou precisará ser reembolsado.`,
+    );
+    if (!confirmed) return;
+
     setBusyId(eventId);
     setError('');
     try {
       await api.patch(`/events/${eventId}/cancel`);
-      refresh();
+      await refresh();
     } catch (err: any) {
-      setError(err.message || 'Não foi possível cancelar.');
+      setError(err.message || (isDraft ? 'Não foi possível descartar.' : 'Não foi possível cancelar.'));
     } finally {
       setBusyId(null);
     }
@@ -102,6 +118,40 @@ export function OrganizerDashboard() {
         {error && (
           <div role="alert" className="bg-board-crimson/10 border border-board-crimson/30 text-board-crimson rounded-lg p-4 mb-6 text-sm">
             {error}
+          </div>
+        )}
+
+        {/* An event is born as a draft — it is NOT in the storefront yet.
+            Without saying so, "criei e não apareceu" is the obvious reaction:
+            the organizer looks for it in the shop and finds nothing. */}
+        {justCreated && (
+          <div
+            role="status"
+            className="bg-board-emerald/10 border border-board-emerald/30 rounded-lg p-4 mb-6 flex flex-wrap items-center gap-3"
+          >
+            <span className="text-board-emerald text-lg" aria-hidden>
+              ✓
+            </span>
+            <p className="flex-1 text-sm text-board-navy">
+              <strong>{justCreated.title}</strong> foi criado como{' '}
+              <strong>rascunho</strong> — ainda não aparece para os clientes.
+            </p>
+            <button
+              onClick={() => {
+                putOnSale(justCreated.id);
+                setJustCreated(null);
+              }}
+              className="btn-gold text-sm py-1.5 px-3"
+            >
+              {PUBLISH_ACTION_LABEL}
+            </button>
+            <button
+              onClick={() => setJustCreated(null)}
+              aria-label="Fechar aviso"
+              className="text-board-navy/40 hover:text-board-navy"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -160,18 +210,27 @@ export function OrganizerDashboard() {
                       </span>
 
                       {event.status === 'draft' && (
-                        <button
-                          onClick={() => putOnSale(event.id)}
-                          disabled={busyId === event.id}
-                          className="btn-gold text-sm py-1.5 px-3 disabled:opacity-50"
-                        >
-                          {busyId === event.id ? '...' : PUBLISH_ACTION_LABEL}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => putOnSale(event.id)}
+                            disabled={busyId === event.id}
+                            className="btn-gold text-sm py-1.5 px-3 disabled:opacity-50"
+                          >
+                            {busyId === event.id ? '...' : PUBLISH_ACTION_LABEL}
+                          </button>
+                          <button
+                            onClick={() => cancelEvent(event.id, event.title, event.status)}
+                            disabled={busyId === event.id}
+                            className="text-board-navy/50 text-sm hover:text-board-crimson hover:underline disabled:opacity-50"
+                          >
+                            Descartar
+                          </button>
+                        </>
                       )}
 
                       {event.status === 'published' && (
                         <button
-                          onClick={() => cancelEvent(event.id, event.title)}
+                          onClick={() => cancelEvent(event.id, event.title, event.status)}
                           disabled={busyId === event.id}
                           className="text-board-crimson text-sm hover:underline disabled:opacity-50"
                         >
@@ -202,9 +261,11 @@ export function OrganizerDashboard() {
       {showWizard && (
         <EventWizard
           onClose={() => setShowWizard(false)}
-          onCreated={() => {
+          onCreated={async (created) => {
             setShowWizard(false);
-            refresh();
+            setJustCreated(created);
+            // Espera a lista voltar antes de fechar, para o evento já estar lá
+            await refresh();
           }}
         />
       )}

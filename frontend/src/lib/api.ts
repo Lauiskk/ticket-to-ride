@@ -1,5 +1,24 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+/**
+ * Absolute URL for an API path, for links the BROWSER navigates to.
+ *
+ * `fetch` is happy with the relative `/api` default because the dev server
+ * proxies it. A full-page redirect is not: in production `/api/auth/google`
+ * resolves against the frontend's own domain, the SPA rewrite answers with
+ * `index.html`, and the user lands on a blank page instead of Google. That is
+ * exactly how the OAuth button broke.
+ *
+ * Use this for OAuth entry points and any other `href` that leaves the SPA.
+ */
+export function apiUrl(path: string): string {
+  const base = BASE_URL.startsWith('http')
+    ? BASE_URL
+    : `${window.location.origin}${BASE_URL}`;
+
+  return `${base.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 class ApiClient {
   private baseUrl: string;
   private refreshing: Promise<boolean> | null = null;

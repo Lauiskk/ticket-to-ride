@@ -32,7 +32,7 @@ interface Sector {
 }
 
 interface Props {
-  onCreated: () => void;
+  onCreated: (created: { id: string; title: string }) => void;
   onClose: () => void;
 }
 
@@ -233,7 +233,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
     setSubmitting(true);
     setSubmitError('');
     try {
-      await api.post('/events', {
+      const created = await api.post<{ id: string; title: string }>('/events', {
         title: title.trim(),
         description: description.trim(),
         date: new Date(date).toISOString(),
@@ -252,7 +252,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
         halfPriceQuota: halfPriceEnabled && halfPriceQuota !== '' ? Number(halfPriceQuota) : null,
         ...(seatingType === 'numbered' ? { sections } : { sectors }),
       });
-      onCreated();
+      onCreated({ id: created.data.id, title: created.data.title });
     } catch (err: any) {
       setSubmitError(err.message || 'Não foi possível criar o evento.');
     } finally {

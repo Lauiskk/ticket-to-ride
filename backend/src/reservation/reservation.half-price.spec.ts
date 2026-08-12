@@ -182,4 +182,70 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
 
     expect(savedReservation).toBeNull();
   });
+
+  // ─── SPEC_CP15 B12 ──────────────────────────────────────────────────────────
+
+  describe('B12: falha de infraestrutura não vira "assento ocupado"', () => {
+    /** Faz o findOne do evento estourar com o erro dado. */
+    const failWith = (err: unknown) => {
+      const seatQb: any = {
+        setLock: jest.fn(() => seatQb), where: jest.fn(() => seatQb),
+        andWhere: jest.fn(() => seatQb), getMany: jest.fn(async () => []),
+        update: jest.fn(() => seatQb), set: jest.fn(() => seatQb),
+        execute: jest.fn(async () => ({})),
+      };
+      const queryRunner: any = {
+        connect: jest.fn(), startTransaction: jest.fn(), commitTransaction: jest.fn(),
+        rollbackTransaction: jest.fn(), release: jest.fn(), query: jest.fn(),
+        manager: {
+          findOne: jest.fn(async () => { throw err; }),
+          createQueryBuilder: jest.fn(() => seatQb),
+          create: jest.fn(), save: jest.fn(),
+        },
+      };
+      return new ReservationService(
+        {} as any,
+        { createQueryBuilder: jest.fn(() => seatQb) } as any,
+        {} as any,
+        { createQueryRunner: () => queryRunner } as any,
+        { get: jest.fn().mockReturnValue(10) } as any,
+        { broadcastSeatsReserved: jest.fn(), broadcastSeatsReleased: jest.fn() } as any,
+      );
+    };
+
+    const reserveOn = (svc: ReservationService) =>
+      svc.reserveSeats(USER, { eventId: EVENT_ID, seatIds: [SEAT_A] });
+
+    it('queda do banco responde 500, não 409 de assento ocupado', async () => {
+      const svc = failWith(Object.assign(new Error('connection terminated'), { code: 'ECONNREFUSED' }));
+
+      await expect(reserveOn(svc)).rejects.toMatchObject({
+        code: 'INTERNAL_ERROR',
+        statusCode: 500,
+      });
+    });
+
+    it('erro sem código nenhum também responde 500', async () => {
+      const svc = failWith(new Error('algo inesperado'));
+
+      await expect(reserveOn(svc)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' });
+    });
+
+    it('conflito real de lock continua sendo SEAT_UNAVAILABLE', async () => {
+      // 55P03 = lock_not_available, o NOWAIT perdendo a corrida
+      const svc = failWith(Object.assign(new Error('could not obtain lock'), { code: '55P03' }));
+
+      await expect(reserveOn(svc)).rejects.toMatchObject({
+        code: 'SEAT_UNAVAILABLE',
+        statusCode: 409,
+      });
+    });
+
+    it('assento já ligado a outra reserva continua sendo conflito', async () => {
+      // 23505 = unique_violation em reservation_seats
+      const svc = failWith(Object.assign(new Error('duplicate key'), { code: '23505' }));
+
+      await expect(reserveOn(svc)).rejects.toMatchObject({ code: 'SEAT_UNAVAILABLE' });
+    });
+  });
 });

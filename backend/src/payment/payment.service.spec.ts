@@ -214,4 +214,66 @@ describe('PaymentService (SPEC_CP10)', () => {
       expect(reservationRepo.update).not.toHaveBeenCalled();
     });
   });
+
+  // ─── SPEC_CP15 B13 ──────────────────────────────────────────────────────────
+
+  describe('B13: pagamento pago sem ingresso é reparado', () => {
+    beforeEach(() => {
+      paymentRepo.findOne.mockResolvedValue({
+        id: 'pay-1',
+        reservationId: 'res-1',
+        userId: 'user-1',
+        status: PaymentStatus.SUCCEEDED,
+        stripePaymentIntentId: 'pi_1',
+      } as Payment);
+    });
+
+    it('reemite quando o pagamento fechou mas nenhum ingresso existe', async () => {
+      // Zero antes, dois depois da reemissão
+      ticketService.countForReservation
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(2);
+
+      const result = await service.getPaymentStatus('user-1', 'res-1');
+
+      expect(ticketService.generateForReservation).toHaveBeenCalledWith('res-1');
+      expect(result.ticketCount).toBe(2);
+      expect(result.ticketsPending).toBe(false);
+    });
+
+    it('não reemite quando o ingresso já existe', async () => {
+      ticketService.countForReservation.mockResolvedValue(1);
+
+      const result = await service.getPaymentStatus('user-1', 'res-1');
+
+      expect(ticketService.generateForReservation).not.toHaveBeenCalled();
+      expect(result.ticketCount).toBe(1);
+      expect(result.ticketsPending).toBe(false);
+    });
+
+    it('sinaliza ticketsPending quando a reemissão também falha', async () => {
+      ticketService.countForReservation.mockResolvedValue(0);
+      ticketService.generateForReservation.mockRejectedValue(new Error('qr indisponível'));
+
+      const result = await service.getPaymentStatus('user-1', 'res-1');
+
+      // A falha não derruba a resposta — o cliente é informado, não abandonado
+      expect(result.status).toBe(PaymentStatus.SUCCEEDED);
+      expect(result.ticketsPending).toBe(true);
+    });
+
+    it('pagamento ainda pendente não dispara reemissão', async () => {
+      paymentRepo.findOne.mockResolvedValue({
+        id: 'pay-1', reservationId: 'res-1', userId: 'user-1',
+        status: PaymentStatus.PENDING, stripePaymentIntentId: 'pi_1',
+      } as Payment);
+      configService.get.mockImplementation(() => '');
+      ticketService.countForReservation.mockResolvedValue(0);
+
+      const result = await service.getPaymentStatus('user-1', 'res-1');
+
+      expect(ticketService.generateForReservation).not.toHaveBeenCalled();
+      expect(result.ticketsPending).toBe(false);
+    });
+  });
 });

@@ -18,6 +18,7 @@ import { Verify2faDto } from './dto/verify-2fa.dto';
 import { Public } from '../shared/decorators/public.decorator';
 import { CurrentUser } from '../shared/decorators/current-user.decorator';
 import { JwtPayload } from './strategies/jwt.strategy';
+import { resolveFrontendUrl } from '../shared/config/frontend-url';
 
 /**
  * Authentication endpoints.
@@ -147,7 +148,10 @@ export class AuthController {
   ) {
     const googleUser = req.user as any;
     const result = await this.authService.handleGoogleLogin(googleUser);
-    const frontendUrl = process.env.CORS_ORIGIN || 'http://localhost:5173';
+    const frontendUrl = resolveFrontendUrl(
+      process.env.FRONTEND_URL,
+      process.env.CORS_ORIGIN,
+    );
 
     if (result.error) {
       // Email already has a password account — redirect with error

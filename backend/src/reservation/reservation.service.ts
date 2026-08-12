@@ -157,12 +157,53 @@ export class ReservationService {
       // Re-throw our own errors
       if (error instanceof AppError) throw error;
 
-      // Unknown DB errors → wrap as SeatUnavailableError (likely lock contention)
-      this.logger.error('Reservation failed', error instanceof Error ? error.message : String(error));
-      throw new SeatUnavailableError();
+      // Only a genuine contention error means "someone took this seat".
+      //
+      // This used to blanket-convert EVERY unknown exception into
+      // SeatUnavailableError. The result was that a database hiccup during a
+      // deploy told buyers "alguém garantiu esse lugar primeiro" for every seat
+      // on the map — sending them to hunt for a free seat that was never taken.
+      // Reporting an infrastructure failure as a business conflict is worse than
+      // failing: it makes the user debug the wrong problem.
+      if (ReservationService.isContentionError(error)) {
+        this.logger.warn(
+          `Seat contention on event ${dto.eventId}: ${ReservationService.pgCode(error)}`,
+        );
+        throw new SeatUnavailableError();
+      }
+
+      this.logger.error(
+        `Reservation failed for event ${dto.eventId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new AppError(
+        'Não foi possível concluir a reserva agora. Tente novamente em instantes.',
+        ErrorCodes.INTERNAL_ERROR,
+        500,
+      );
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /** Postgres error code, when the driver gives us one. */
+  private static pgCode(error: unknown): string | undefined {
+    return typeof error === 'object' && error !== null
+      ? (error as { code?: string }).code
+      : undefined;
+  }
+
+  /**
+   * Errors that genuinely mean another buyer got there first.
+   *
+   * - `55P03` lock_not_available — our SELECT ... FOR UPDATE NOWAIT lost the race
+   * - `40001` serialization_failure
+   * - `40P01` deadlock_detected
+   * - `23505` unique_violation — the seat is already linked to another reservation
+   */
+  private static isContentionError(error: unknown): boolean {
+    const code = ReservationService.pgCode(error);
+    return code === '55P03' || code === '40001' || code === '40P01' || code === '23505';
   }
 
   // ─── Get Available Seats ────────────────────────────────────────────────────

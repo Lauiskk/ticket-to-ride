@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useAuth, getDefaultRoute } from '../context/AuthContext';
 import { sanitizeEmail } from '../lib/sanitize';
+import { apiUrl } from '../lib/api';
 import { TrainLogo } from '../components/TrainLogo';
 
 export function LoginPage() {
@@ -132,7 +133,7 @@ export function LoginPage() {
               </div>
             </div>
             <a
-              href="/api/auth/google"
+              href={apiUrl('/auth/google')}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-board-parchment-dark bg-white hover:bg-board-parchment/30 transition-colors font-medium text-board-navy"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
