@@ -191,6 +191,22 @@ export interface ApiError {
 
 // ─── WebSocket ──────────────────────────────────────────────────────────────
 
+/**
+ * One line of the gate's operational agenda (GET /gate/events).
+ * Intentionally not an Event: no price, no description, no buyer data.
+ */
+export interface GateEventSummary {
+  id: string;
+  title: string;
+  venueName: string;
+  date: string;
+  entryOpen: boolean;
+  entryOpensAt: string;
+  entryClosesAt: string;
+  ticketsIssued: number;
+  ticketsValidated: number;
+}
+
 export interface SeatStatusUpdate {
   eventId: string;
   seats: Array<{ id: string; status: SeatStatus }>;
