@@ -125,7 +125,16 @@ export interface Ticket {
   isHalfPrice: boolean;
   halfPriceCategory: string | null;
   validatedAt: string | null;
-  validatedByGateId: string | null;
+  validatedByGateId?: string | null;
+  /** Evento embutido — o ingresso precisa dizer para QUAL show ele serve. */
+  event: {
+    title: string;
+    date: string;
+    venueName: string;
+    venueCity: string | null;
+    venueAddress: string;
+    imageUrl: string | null;
+  } | null;
   createdAt: string;
 }
 

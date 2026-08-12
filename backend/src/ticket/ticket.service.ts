@@ -7,6 +7,7 @@ import { Reservation } from '../reservation/entities/reservation.entity';
 import { TicketSignerService, TicketPayload } from './crypto/ticket-signer.service';
 import { QrGeneratorService } from './qr/qr-generator.service';
 import { AppError, ErrorCodes } from '../shared/errors';
+import { TicketResponseDto } from './dto/ticket-response.dto';
 
 /**
  * Ticket service — generation, retrieval, owner-only access.
@@ -73,8 +74,11 @@ export class TicketService {
   /**
    * Get a ticket by ID — only if the requesting user is the owner (Req 9.6).
    */
-  async getTicket(ticketId: string, userId: string): Promise<Ticket> {
-    const ticket = await this.ticketRepo.findOne({ where: { id: ticketId } });
+  async getTicket(ticketId: string, userId: string): Promise<TicketResponseDto> {
+    const ticket = await this.ticketRepo.findOne({
+      where: { id: ticketId },
+      relations: ['event'],
+    });
 
     if (!ticket) {
       throw new AppError('Ticket not found', ErrorCodes.NOT_FOUND, 404);
@@ -85,7 +89,7 @@ export class TicketService {
       throw new AppError('Ticket not found', ErrorCodes.NOT_FOUND, 404);
     }
 
-    return ticket;
+    return TicketResponseDto.fromEntity(ticket);
   }
 
   // ─── Count Tickets of a Reservation ───────────────────────────────────────
@@ -101,11 +105,16 @@ export class TicketService {
 
   // ─── Get My Tickets ─────────────────────────────────────────────────────────
 
-  async getMyTickets(userId: string): Promise<Ticket[]> {
-    return this.ticketRepo.find({
+  async getMyTickets(userId: string): Promise<TicketResponseDto[]> {
+    // The event comes along so the list can lead with the show's name instead
+    // of a seat code the buyer cannot place.
+    const tickets = await this.ticketRepo.find({
       where: { ownerId: userId },
+      relations: ['event'],
       order: { createdAt: 'DESC' },
     });
+
+    return tickets.map((t) => TicketResponseDto.fromEntity(t));
   }
 
   // ─── Private: Generate Single Ticket with Retry ───────────────────────────

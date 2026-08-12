@@ -113,19 +113,45 @@ export function MyTicketsPage() {
                     </div>
                   </div>
 
-                  {/* Ticket Info */}
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-display text-lg font-semibold text-board-navy">
-                        Assento: {ticket.seatIdentifier}
+                  {/* Ticket Info — the event leads, because that is what the
+                      buyer is looking for. A seat code says nothing about
+                      which show it belongs to. */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-3 mb-1">
+                      <h3 className="font-display text-lg font-semibold text-board-navy leading-tight">
+                        {ticket.event?.title ?? 'Evento'}
                       </h3>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadge(ticket.status)}`}>
-                        {getStatusLabel(ticket.status)}
-                      </span>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusBadge(ticket.status)}`}>
+                          {getStatusLabel(ticket.status)}
+                        </span>
+                        {ticket.isHalfPrice && (
+                          <span className="px-2 py-1 rounded text-xs font-bold bg-board-crimson text-white">
+                            MEIA
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-board-navy/60 text-sm mb-1">Código: <span className="font-ticket">{ticket.ticketCode.slice(0, 8)}...</span></p>
-                    <p className="text-board-navy/50 text-sm mb-4">
-                      Comprado em {new Date(ticket.createdAt).toLocaleDateString('pt-BR')}
+
+                    {ticket.event && (
+                      <p className="text-board-navy/60 text-sm mb-1">
+                        {new Date(ticket.event.date).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: 'long',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}{' '}
+                        · {ticket.event.venueName}
+                        {ticket.event.venueCity ? `, ${ticket.event.venueCity}` : ''}
+                      </p>
+                    )}
+
+                    <p className="text-board-navy/70 text-sm font-medium mb-1">
+                      Assento {ticket.seatIdentifier}
+                    </p>
+                    <p className="text-board-navy/45 text-xs mb-4 font-ticket">
+                      {ticket.ticketCode.slice(0, 8)} · comprado em{' '}
+                      {new Date(ticket.createdAt).toLocaleDateString('pt-BR')}
                     </p>
 
                     {/* Actions */}

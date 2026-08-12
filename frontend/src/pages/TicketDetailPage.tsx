@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import QRCode from 'react-qr-code';
 import { api } from '../lib/api';
-import type { Ticket, Event } from '../types';
+import type { Ticket } from '../types';
 
 /**
  * Single ticket, full screen (SPEC_CP10 RF-7 / AC-8).
@@ -54,14 +54,9 @@ export function TicketDetailPage() {
     enabled: !!ticketId,
   });
 
-  const { data: event } = useQuery({
-    queryKey: ['event', ticket?.eventId],
-    queryFn: async () => {
-      const res = await api.get<Event>(`/events/${ticket!.eventId}`);
-      return res.data;
-    },
-    enabled: !!ticket?.eventId,
-  });
+  // O evento vem embutido no ingresso — uma requisição a menos, e a tela nunca
+  // fica meio renderizada esperando o título chegar.
+  const event = ticket?.event ?? null;
 
   const handleShare = async () => {
     if (!ticket) return;
