@@ -17,7 +17,19 @@ import { ReservationModule } from '../reservation/reservation.module';
     // browser on the event page must see it without reloading (SPEC_CP10 RF-6)
     ReservationModule,
   ],
-  controllers: [PaymentController, StripeWebhookController],
+  /**
+   * ORDER MATTERS — do not sort this array.
+   *
+   * Both controllers are mounted on `payments`, and PaymentController declares
+   * `POST :reservationId`. Registered first, it swallows `POST /payments/webhook`
+   * as `reservationId = "webhook"` — a client-only route, so Stripe got 401 and
+   * the `@Public()` on the webhook was never even consulted. Guards run before
+   * pipes, so ParseUUIDPipe never got the chance to reject "webhook" either.
+   *
+   * Nest matches in registration order, so the literal path must come first.
+   * Covered by payment.routing.spec.ts.
+   */
+  controllers: [StripeWebhookController, PaymentController],
   providers: [PaymentService],
   exports: [PaymentService],
 })
