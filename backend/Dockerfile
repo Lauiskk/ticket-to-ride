@@ -1,5 +1,10 @@
-# ─── Build ────────────────────────────────────────────────────────────────────
-FROM node:20-slim AS build
+# ─── Base ─────────────────────────────────────────────────────────────────────
+# Source + every dependency, including dev. This is the stage docker-compose
+# runs for local development (`target: base` + `npm run start:dev`); it was
+# referenced there but had stopped existing here, so `docker compose up --build`
+# failed with "target stage base could not be found" and everyone kept running
+# whatever image happened to be cached.
+FROM node:20-slim AS base
 WORKDIR /app
 
 # Copy the lock file too. Building from package.json alone meant `npm install`
@@ -10,6 +15,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --legacy-peer-deps
 
 COPY . .
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+FROM base AS build
 RUN npm run build
 
 # ─── Runtime ──────────────────────────────────────────────────────────────────

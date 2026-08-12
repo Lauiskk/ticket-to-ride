@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import QRCode from 'react-qr-code';
 import { api } from '../lib/api';
+import { useTicketSocket } from '../hooks/useTicketSocket';
 import type { Ticket } from '../types';
 
 /**
@@ -57,6 +58,10 @@ export function TicketDetailPage() {
   // O evento vem embutido no ingresso — uma requisição a menos, e a tela nunca
   // fica meio renderizada esperando o título chegar.
   const event = ticket?.event ?? null;
+
+  // Esta é A tela que fica aberta na portaria, na mão de quem vai entrar. Sem
+  // isso ela continua dizendo "Válido" depois que o QR já foi lido (SPEC_CP18).
+  useTicketSocket([ticket?.eventId]);
 
   const handleShare = async () => {
     if (!ticket) return;

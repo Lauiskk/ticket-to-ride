@@ -113,42 +113,112 @@ export function EventWizard({ onCreated, onClose }: Props) {
 
   // ─── Validation ───────────────────────────────────────────────────────────
 
-  const validateStep = (target: number): boolean => {
-    const e: Errors = {};
+  /**
+   * One field, one rule (SPEC_CP18 RF-4). Keeping the rules in a single place
+   * means the message you get when you leave a field and the message you get
+   * when you press "Continuar" are the same sentence — before, the form only
+   * ever spoke at the end, and only about the whole step at once.
+   */
+  const fieldError = (name: string): string | undefined => {
+    switch (name) {
+      case 'title':
+        if (!title.trim()) return 'Dê um nome ao evento.';
+        if (title.trim().length < 3) return 'Nome muito curto.';
+        return;
+      case 'description':
+        if (!description.trim()) return 'Descreva o que o público vai ver.';
+        if (description.trim().length < 10) return 'Descreva com um pouco mais de detalhe.';
+        return;
+      case 'date':
+        if (!date) return 'Informe data e horário.';
+        if (new Date(date).getTime() <= Date.now()) return 'A data precisa ser no futuro.';
+        return;
+      case 'venueName':
+        return venueName.trim() ? undefined : 'Informe o nome do local.';
+      case 'venueAddress':
+        return venueAddress.trim() ? undefined : 'Informe o endereço.';
+      case 'venueCity':
+        return venueCity.trim() ? undefined : 'Informe a cidade.';
+      case 'capacity':
+        return capacity < 1 ? 'Configure pelo menos um lugar.' : undefined;
+      case 'price':
+        return price === '' || Number(price) < 0
+          ? 'Informe o preço (0 para gratuito).'
+          : undefined;
+      case 'halfPriceQuota':
+        return halfPriceEnabled && halfPriceQuota !== '' && Number(halfPriceQuota) > capacity
+          ? 'A cota não pode passar da capacidade.'
+          : undefined;
+    }
+
+    const section = /^section-(\d+)-(name|rows|seats)$/.exec(name);
+    if (section) {
+      const s = sections[Number(section[1])];
+      if (!s) return;
+      if (section[2] === 'name') return s.name.trim() ? undefined : 'Nome do setor.';
+      if (section[2] === 'rows') return !s.rows || s.rows < 1 ? 'Mín. 1.' : undefined;
+      return !s.seatsPerRow || s.seatsPerRow < 1 ? 'Mín. 1.' : undefined;
+    }
+
+    const sector = /^sector-(\d+)-(name|capacity)$/.exec(name);
+    if (sector) {
+      const s = sectors[Number(sector[1])];
+      if (!s) return;
+      if (sector[2] === 'name') return s.name.trim() ? undefined : 'Nome do setor.';
+      return !s.capacity || s.capacity < 1 ? 'Mín. 1.' : undefined;
+    }
+
+    return undefined;
+  };
+
+  /** Campo abandonado: agora vale a pena dizer o que está errado nele. */
+  const checkField = (name: string) =>
+    setErrors((prev) => {
+      const message = fieldError(name);
+      if (message) return { ...prev, [name]: message };
+      if (!prev[name]) return prev;
+      const { [name]: _removed, ...rest } = prev;
+      return rest;
+    });
+
+  /**
+   * A pessoa voltou a mexer no campo — o erro anterior já não descreve o que
+   * está na tela (SPEC_CP18 RF-5). Mensagem que sobrevive à correção ensina a
+   * ignorar mensagem de erro.
+   */
+  const clearError = (name: string) =>
+    setErrors((prev) => {
+      if (!prev[name]) return prev;
+      const { [name]: _removed, ...rest } = prev;
+      return rest;
+    });
+
+  const stepFields = (target: number): string[] => {
+    const names: string[] = [];
 
     if (target >= 1) {
-      if (!title.trim()) e.title = 'Dê um nome ao evento.';
-      else if (title.trim().length < 3) e.title = 'Nome muito curto.';
-
-      if (!description.trim()) e.description = 'Descreva o que o público vai ver.';
-      else if (description.trim().length < 10) e.description = 'Descreva com um pouco mais de detalhe.';
-
-      if (!date) e.date = 'Informe data e horário.';
-      else if (new Date(date).getTime() <= Date.now())
-        e.date = 'A data precisa ser no futuro.';
-
-      if (!venueName.trim()) e.venueName = 'Informe o nome do local.';
-      if (!venueAddress.trim()) e.venueAddress = 'Informe o endereço.';
-      if (!venueCity.trim()) e.venueCity = 'Informe a cidade.';
+      names.push('title', 'description', 'date', 'venueName', 'venueAddress', 'venueCity');
     }
 
     if (target >= 2 && step >= 2) {
       if (seatingType === 'numbered') {
-        sections.forEach((s, i) => {
-          if (!s.name.trim()) e[`section-${i}-name`] = 'Nome do setor.';
-          if (!s.rows || s.rows < 1) e[`section-${i}-rows`] = 'Mín. 1.';
-          if (!s.seatsPerRow || s.seatsPerRow < 1) e[`section-${i}-seats`] = 'Mín. 1.';
-        });
+        sections.forEach((_, i) =>
+          names.push(`section-${i}-name`, `section-${i}-rows`, `section-${i}-seats`),
+        );
       } else {
-        sectors.forEach((s, i) => {
-          if (!s.name.trim()) e[`sector-${i}-name`] = 'Nome do setor.';
-          if (!s.capacity || s.capacity < 1) e[`sector-${i}-capacity`] = 'Mín. 1.';
-        });
+        sectors.forEach((_, i) => names.push(`sector-${i}-name`, `sector-${i}-capacity`));
       }
-      if (capacity < 1) e.capacity = 'Configure pelo menos um lugar.';
-      if (price === '' || Number(price) < 0) e.price = 'Informe o preço (0 para gratuito).';
-      if (halfPriceEnabled && halfPriceQuota !== '' && Number(halfPriceQuota) > capacity)
-        e.halfPriceQuota = 'A cota não pode passar da capacidade.';
+      names.push('capacity', 'price', 'halfPriceQuota');
+    }
+
+    return names;
+  };
+
+  const validateStep = (target: number): boolean => {
+    const e: Errors = {};
+    for (const name of stepFields(target)) {
+      const message = fieldError(name);
+      if (message) e[name] = message;
     }
 
     setErrors(e);
@@ -269,6 +339,13 @@ export function EventWizard({ onCreated, onClose }: Props) {
         : 'border-board-parchment-dark focus:ring-board-gold/40'
     }`;
 
+  /** Aparência, checagem ao sair do campo e o estado para leitores de tela. */
+  const validated = (name: string) => ({
+    className: field(name),
+    onBlur: () => checkField(name),
+    'aria-invalid': errors[name] ? true : undefined,
+  });
+
   const Err = ({ name }: { name: string }) =>
     errors[name] ? (
       <p className="text-board-crimson text-xs mt-1">{errors[name]}</p>
@@ -282,7 +359,16 @@ export function EventWizard({ onCreated, onClose }: Props) {
   );
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-start md:items-center justify-center z-50 p-4 overflow-y-auto">
+    /*
+      Sempre alinhado ao topo.
+
+      Com `md:items-center` o cartão era centralizado verticalmente; quando ele
+      fica mais alto que a janela, o topo dele sai para cima da tela e o
+      cabeçalho `sticky` — que gruda no topo do contêiner de rolagem — passa a
+      cobrir o primeiro campo. Resultado: o campo Título existia, aparecia na
+      tela e simplesmente não recebia clique.
+    */
+    <div className="fixed inset-0 bg-black/60 flex items-start justify-center z-50 p-4 overflow-y-auto">
       <motion.div
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -474,7 +560,14 @@ export function EventWizard({ onCreated, onClose }: Props) {
             <div className="space-y-4">
               <div>
                 <Label required>Título</Label>
-                <input value={title} onChange={(e) => setTitle(e.target.value)} className={field('title')} />
+                <input
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    clearError('title');
+                  }}
+                  {...validated('title')}
+                />
                 <Err name="title" />
               </div>
 
@@ -482,9 +575,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                 <Label required>Descrição</Label>
                 <textarea
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    clearError('description');
+                  }}
                   rows={3}
-                  className={field('description')}
+                  {...validated('description')}
                 />
                 <Err name="description" />
               </div>
@@ -495,8 +591,11 @@ export function EventWizard({ onCreated, onClose }: Props) {
                   type="datetime-local"
                   value={date}
                   min={nowLocalISO()}
-                  onChange={(e) => setDate(e.target.value)}
-                  className={field('date')}
+                  onChange={(e) => {
+                    setDate(e.target.value);
+                    clearError('date');
+                  }}
+                  {...validated('date')}
                 />
                 <Err name="date" />
               </div>
@@ -505,9 +604,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                 <Label required>Local</Label>
                 <input
                   value={venueName}
-                  onChange={(e) => setVenueName(e.target.value)}
+                  onChange={(e) => {
+                    setVenueName(e.target.value);
+                    clearError('venueName');
+                  }}
                   placeholder="Ex.: Teatro Municipal"
-                  className={field('venueName')}
+                  {...validated('venueName')}
                 />
                 <Err name="venueName" />
               </div>
@@ -516,9 +618,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                 <Label required>Endereço</Label>
                 <input
                   value={venueAddress}
-                  onChange={(e) => setVenueAddress(e.target.value)}
+                  onChange={(e) => {
+                    setVenueAddress(e.target.value);
+                    clearError('venueAddress');
+                  }}
                   placeholder="Rua, número, bairro"
-                  className={field('venueAddress')}
+                  {...validated('venueAddress')}
                 />
                 <Err name="venueAddress" />
               </div>
@@ -527,8 +632,11 @@ export function EventWizard({ onCreated, onClose }: Props) {
                 <Label required>Cidade</Label>
                 <input
                   value={venueCity}
-                  onChange={(e) => setVenueCity(e.target.value)}
-                  className={field('venueCity')}
+                  onChange={(e) => {
+                    setVenueCity(e.target.value);
+                    clearError('venueCity');
+                  }}
+                  {...validated('venueCity')}
                 />
                 <Err name="venueCity" />
               </div>
@@ -580,11 +688,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                       <div className="flex-1">
                         <input
                           value={s.name}
-                          onChange={(e) =>
-                            setSections(sections.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
-                          }
+                          onChange={(e) => {
+                            setSections(sections.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)));
+                            clearError(`section-${i}-name`);
+                          }}
                           placeholder="Nome do setor"
-                          className={field(`section-${i}-name`)}
+                          {...validated(`section-${i}-name`)}
                         />
                         <Err name={`section-${i}-name`} />
                       </div>
@@ -593,11 +702,14 @@ export function EventWizard({ onCreated, onClose }: Props) {
                           type="number"
                           min={1}
                           value={s.rows}
-                          onChange={(e) =>
-                            setSections(sections.map((x, j) => (j === i ? { ...x, rows: Number(e.target.value) } : x)))
-                          }
-                          className={field(`section-${i}-rows`)}
+                          onChange={(e) => {
+                            setSections(sections.map((x, j) => (j === i ? { ...x, rows: Number(e.target.value) } : x)));
+                            clearError(`section-${i}-rows`);
+                            clearError('capacity');
+                          }}
+                          {...validated(`section-${i}-rows`)}
                         />
+                        <Err name={`section-${i}-rows`} />
                         <p className="text-[11px] text-board-navy/40 mt-0.5">fileiras</p>
                       </div>
                       <div className="w-24">
@@ -605,13 +717,16 @@ export function EventWizard({ onCreated, onClose }: Props) {
                           type="number"
                           min={1}
                           value={s.seatsPerRow}
-                          onChange={(e) =>
+                          onChange={(e) => {
                             setSections(
                               sections.map((x, j) => (j === i ? { ...x, seatsPerRow: Number(e.target.value) } : x)),
-                            )
-                          }
-                          className={field(`section-${i}-seats`)}
+                            );
+                            clearError(`section-${i}-seats`);
+                            clearError('capacity');
+                          }}
+                          {...validated(`section-${i}-seats`)}
                         />
+                        <Err name={`section-${i}-seats`} />
                         <p className="text-[11px] text-board-navy/40 mt-0.5">por fileira</p>
                       </div>
                       {sections.length > 1 && (
@@ -640,11 +755,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                       <div className="flex-1">
                         <input
                           value={s.name}
-                          onChange={(e) =>
-                            setSectors(sectors.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
-                          }
+                          onChange={(e) => {
+                            setSectors(sectors.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)));
+                            clearError(`sector-${i}-name`);
+                          }}
                           placeholder="Ex.: Pista, Camarote"
-                          className={field(`sector-${i}-name`)}
+                          {...validated(`sector-${i}-name`)}
                         />
                         <Err name={`sector-${i}-name`} />
                       </div>
@@ -653,11 +769,16 @@ export function EventWizard({ onCreated, onClose }: Props) {
                           type="number"
                           min={1}
                           value={s.capacity}
-                          onChange={(e) =>
-                            setSectors(sectors.map((x, j) => (j === i ? { ...x, capacity: Number(e.target.value) } : x)))
-                          }
-                          className={field(`sector-${i}-capacity`)}
+                          onChange={(e) => {
+                            setSectors(
+                              sectors.map((x, j) => (j === i ? { ...x, capacity: Number(e.target.value) } : x)),
+                            );
+                            clearError(`sector-${i}-capacity`);
+                            clearError('capacity');
+                          }}
+                          {...validated(`sector-${i}-capacity`)}
                         />
+                        <Err name={`sector-${i}-capacity`} />
                         <p className="text-[11px] text-board-navy/40 mt-0.5">lugares</p>
                       </div>
                       {sectors.length > 1 && (
@@ -697,9 +818,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                   min={0}
                   step="0.01"
                   value={price}
-                  onChange={(e) => setPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  onChange={(e) => {
+                    setPrice(e.target.value === '' ? '' : Number(e.target.value));
+                    clearError('price');
+                  }}
                   placeholder="0,00"
-                  className={field('price')}
+                  {...validated('price')}
                 />
                 <Err name="price" />
               </div>
@@ -731,11 +855,12 @@ export function EventWizard({ onCreated, onClose }: Props) {
                           type="number"
                           min={0}
                           value={halfPriceQuota}
-                          onChange={(e) =>
-                            setHalfPriceQuota(e.target.value === '' ? '' : Number(e.target.value))
-                          }
+                          onChange={(e) => {
+                            setHalfPriceQuota(e.target.value === '' ? '' : Number(e.target.value));
+                            clearError('halfPriceQuota');
+                          }}
                           placeholder="Sem limite"
-                          className={field('halfPriceQuota')}
+                          {...validated('halfPriceQuota')}
                         />
                         <Err name="halfPriceQuota" />
                       </div>

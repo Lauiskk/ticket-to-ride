@@ -6,8 +6,12 @@ import { sanitizeEmail } from '../lib/sanitize';
 import { apiUrl } from '../lib/api';
 import { TrainLogo } from '../components/TrainLogo';
 
+/** O bastante para pegar erro de digitação, sem tentar adivinhar o que é um e-mail. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function LoginPage() {
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,8 +37,21 @@ export function LoginPage() {
     }
   }, [searchParams, navigate]);
 
+  /**
+   * Checagem ao sair do campo (SPEC_CP18 RF-4). Antes, um e-mail digitado
+   * errado só era descoberto depois da ida ao servidor, e voltava como
+   * "credenciais inválidas" — mandando a pessoa desconfiar da senha.
+   */
+  const checkEmail = () => {
+    setEmailError(!email || EMAIL_SHAPE.test(email) ? '' : 'Formato de e-mail inválido.');
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!EMAIL_SHAPE.test(email)) {
+      setEmailError('Formato de e-mail inválido.');
+      return;
+    }
     setError('');
     setLoading(true);
     try {
@@ -79,25 +96,46 @@ export function LoginPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-board-navy/70 mb-1">Email</label>
+              <label htmlFor="login-email" className="block text-sm font-medium text-board-navy/70 mb-1">
+                Email
+              </label>
               <input
+                id="login-email"
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                // O erro descreve o que estava no campo, não o que está sendo
+                // digitado agora — some ao primeiro toque (SPEC_CP18 RF-5)
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailError('');
+                  setError('');
+                }}
+                onBlur={checkEmail}
+                aria-invalid={emailError ? true : undefined}
                 required
-                className="w-full px-4 py-3 rounded-lg border border-board-parchment-dark bg-white
-                         focus:outline-none focus:ring-2 focus:ring-board-gold/50 focus:border-board-gold
-                         transition-all"
+                className={`w-full px-4 py-3 rounded-lg border bg-white
+                         focus:outline-none focus:ring-2 transition-all ${
+                           emailError
+                             ? 'border-board-crimson focus:ring-board-crimson/30'
+                             : 'border-board-parchment-dark focus:ring-board-gold/50 focus:border-board-gold'
+                         }`}
                 placeholder="seu@email.com"
               />
+              {emailError && <p className="mt-1 text-xs text-board-crimson">{emailError}</p>}
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-board-navy/70 mb-1">Senha</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-board-navy/70 mb-1">
+                Senha
+              </label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError('');
+                }}
                 required
                 className="w-full px-4 py-3 rounded-lg border border-board-parchment-dark bg-white
                          focus:outline-none focus:ring-2 focus:ring-board-gold/50 focus:border-board-gold

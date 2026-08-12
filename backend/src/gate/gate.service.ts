@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Ticket, TicketStatus } from '../ticket/entities/ticket.entity';
 import { Event, EventStatus } from '../event/entities/event.entity';
 import { TicketSignerService } from '../ticket/crypto/ticket-signer.service';
+import { ReservationGateway } from '../reservation/reservation.gateway';
 import { AppError, ErrorCodes, TicketInvalidError, EventNotActiveError } from '../shared/errors';
 
 /**
@@ -65,6 +66,7 @@ export class GateService {
     @InjectRepository(Event)
     private readonly eventRepo: Repository<Event>,
     private readonly signerService: TicketSignerService,
+    private readonly gateway: ReservationGateway,
   ) {}
 
   /**
@@ -139,6 +141,20 @@ export class GateService {
     await this.ticketRepo.save(ticket);
 
     this.logger.log(`Ticket ${ticket.id} validated by gate ${gateUserId}`);
+
+    // Tell whoever has this ticket open on their phone that it just got used
+    // (SPEC_CP18 RF-2). Broadcast failure must never cost someone their entry:
+    // the ticket is already consumed in the database, and a queue at a door
+    // cannot stop because a WebSocket did (RNF-2).
+    try {
+      this.gateway.broadcastTicketValidated(event.id, ticket.id, now);
+    } catch (error) {
+      this.logger.warn(
+        `Ticket ${ticket.id} validated but the live notice failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     return {
       valid: true,

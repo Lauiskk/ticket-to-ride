@@ -286,6 +286,30 @@ export function GateValidationPage() {
   return (
     <div className="min-h-screen bg-board-navy py-10 px-4">
       <AnimatePresence>
+        {/*
+          While the server decides, the operator gets an answer to the only
+          question they have: did it read? Before, the camera path gave no
+          feedback at all — the screen sat still until the verdict flashed, so
+          the natural move was to scan again, which turns a valid entry into a
+          bogus "já utilizado" for the person in front of them (SPEC_CP18 RF-3).
+        */}
+        {validating && !verdict && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            role="status"
+            aria-live="polite"
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6 text-center bg-board-navy/95"
+          >
+            <div className="w-16 h-16 rounded-full border-4 border-board-gold/25 border-t-board-gold animate-spin" />
+            <p className="font-display text-2xl font-bold text-board-parchment mt-6">
+              Lendo ingresso...
+            </p>
+            <p className="text-board-parchment/50 mt-1">Não escaneie de novo</p>
+          </motion.div>
+        )}
+
         {verdict && (
           <motion.div
             initial={{ opacity: 0 }}

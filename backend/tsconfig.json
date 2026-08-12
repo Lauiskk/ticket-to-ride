@@ -22,5 +22,13 @@
     "paths": {
       "@shared/*": ["src/shared/*"]
     }
+  },
+  "watchOptions": {
+    // O container monta ./backend/src do Windows. Eventos de arquivo não
+    // atravessam esse bind mount, então `npm run start:dev` ficava rodando
+    // código de horas atrás sem avisar ninguém — o pior tipo de "não
+    // funcionou": o que parece que funcionou. Sondagem resolve.
+    "watchFile": "dynamicPriorityPolling",
+    "watchDirectory": "dynamicPriorityPolling"
   }
 }

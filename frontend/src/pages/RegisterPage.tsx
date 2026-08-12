@@ -9,6 +9,7 @@ import { TrainLogo } from '../components/TrainLogo';
 
 export function RegisterPage() {
   const [name, setName] = useState('');
+  const [nameError, setNameError] = useState('');
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [password, setPassword] = useState('');
@@ -31,6 +32,18 @@ export function RegisterPage() {
     }
   };
 
+  /**
+   * O nome só reclamava no envio, e num banner no topo do formulário — longe do
+   * campo que precisa mudar. Agora avisa ao sair do campo, onde a pessoa ainda
+   * está olhando (SPEC_CP18 RF-4).
+   */
+  const handleNameBlur = () => {
+    const clean = sanitizeInput(name);
+    setNameError(
+      !name || validateLength(clean, 2, 100) ? '' : 'O nome deve ter entre 2 e 100 caracteres.',
+    );
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -41,7 +54,7 @@ export function RegisterPage() {
 
     // Validate lengths
     if (!validateLength(cleanName, 2, 100)) {
-      setError('Nome deve ter entre 2 e 100 caracteres');
+      setNameError('O nome deve ter entre 2 e 100 caracteres.');
       return;
     }
     if (!validateEmail(cleanEmail)) {
@@ -90,15 +103,29 @@ export function RegisterPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-board-navy/70 mb-1">Nome</label>
+              <label htmlFor="register-name" className="block text-sm font-medium text-board-navy/70 mb-1">
+                Nome
+              </label>
               <input
+                id="register-name"
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameError('');
+                  setError('');
+                }}
+                onBlur={handleNameBlur}
+                aria-invalid={nameError ? true : undefined}
                 required
-                className="w-full px-4 py-3 rounded-lg border border-board-parchment-dark bg-white focus:outline-none focus:ring-2 focus:ring-board-gold/50 focus:border-board-gold transition-all"
+                className={`w-full px-4 py-3 rounded-lg border bg-white focus:outline-none focus:ring-2 transition-all ${
+                  nameError
+                    ? 'border-board-crimson focus:ring-board-crimson/30'
+                    : 'border-board-parchment-dark focus:ring-board-gold/50 focus:border-board-gold'
+                }`}
                 placeholder="Seu nome"
               />
+              {nameError && <p className="mt-1 text-xs text-board-crimson">{nameError}</p>}
             </div>
 
             <div>
@@ -106,8 +133,13 @@ export function RegisterPage() {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => { setEmail(e.target.value); setEmailError(''); }}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setEmailError('');
+                  setError('');
+                }}
                 onBlur={handleEmailBlur}
+                aria-invalid={emailError ? true : undefined}
                 required
                 className={`w-full px-4 py-3 rounded-lg border bg-white focus:outline-none focus:ring-2 transition-all ${
                   emailError ? 'border-board-crimson focus:ring-board-crimson/30' : 'border-board-parchment-dark focus:ring-board-gold/50 focus:border-board-gold'
@@ -124,7 +156,10 @@ export function RegisterPage() {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError('');
+                }}
                 required
                 minLength={8}
                 className="w-full px-4 py-3 rounded-lg border border-board-parchment-dark bg-white focus:outline-none focus:ring-2 focus:ring-board-gold/50 focus:border-board-gold transition-all"

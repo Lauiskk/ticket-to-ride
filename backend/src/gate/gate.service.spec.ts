@@ -3,11 +3,15 @@ import { GateService } from './gate.service';
 import { Ticket, TicketStatus } from '../ticket/entities/ticket.entity';
 import { Event, EventStatus } from '../event/entities/event.entity';
 import { TicketSignerService } from '../ticket/crypto/ticket-signer.service';
+import { ReservationGateway } from '../reservation/reservation.gateway';
 import { AppError } from '../shared/errors';
 
 /**
  * Tests for SPEC_CP11 — portaria isolada e operável.
  * docs/plan/SPEC_CP11_portaria_isolada.md
+ *
+ * E SPEC_CP18 — tempo real na portaria.
+ * docs/plan/SPEC_CP18_tempo_real.md
  */
 
 const GATE_USER = 'gate-user-1';
@@ -19,6 +23,7 @@ describe('GateService (SPEC_CP11)', () => {
   let ticketRepo: jest.Mocked<Repository<Ticket>>;
   let eventRepo: jest.Mocked<Repository<Event>>;
   let signer: TicketSignerService;
+  let gateway: jest.Mocked<ReservationGateway>;
 
   /** Event that started 30 minutes ago — inside the entry window. */
   const liveEvent = () =>
@@ -64,7 +69,11 @@ describe('GateService (SPEC_CP11)', () => {
       find: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<Repository<Event>>;
 
-    service = new GateService(ticketRepo, eventRepo, signer);
+    gateway = {
+      broadcastTicketValidated: jest.fn(),
+    } as unknown as jest.Mocked<ReservationGateway>;
+
+    service = new GateService(ticketRepo, eventRepo, signer, gateway);
   });
 
   // ─── AC-6 ───────────────────────────────────────────────────────────────────
@@ -225,6 +234,105 @@ describe('GateService (SPEC_CP11)', () => {
       ).rejects.toBeInstanceOf(AppError);
 
       expect(ticketRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── SPEC_CP18 — o ingresso muda de estado na tela de quem o comprou ────────
+
+  describe('SPEC_CP18 — aviso de validação em tempo real', () => {
+    const activeTicket = () =>
+      ({
+        id: 'ticket-1',
+        seatIdentifier: 'Plateia-1-1',
+        status: TicketStatus.ACTIVE,
+        isHalfPrice: true,
+        halfPriceCategory: 'student',
+        holderDocument: '2024001234',
+      }) as Ticket;
+
+    it('AC-1: validação bem-sucedida avisa a sala do evento', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue(activeTicket());
+
+      await service.validateTicket(signedQr('ticket-1', LIVE_EVENT_ID), GATE_USER, LIVE_EVENT_ID);
+
+      expect(gateway.broadcastTicketValidated).toHaveBeenCalledWith(
+        LIVE_EVENT_ID,
+        'ticket-1',
+        expect.any(Date),
+      );
+    });
+
+    it('AC-2: ingresso já usado não gera aviso — nada mudou de estado', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue({
+        ...activeTicket(),
+        status: TicketStatus.USED,
+        validatedAt: new Date(),
+      } as Ticket);
+
+      await expect(
+        service.validateTicket(signedQr('ticket-1', LIVE_EVENT_ID), GATE_USER, LIVE_EVENT_ID),
+      ).rejects.toMatchObject({ code: 'TICKET_ALREADY_USED' });
+
+      expect(gateway.broadcastTicketValidated).not.toHaveBeenCalled();
+    });
+
+    it('AC-3: ingresso de outro evento não gera aviso', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+
+      await expect(
+        service.validateTicket(signedQr('ticket-1', FUTURE_EVENT_ID), GATE_USER, LIVE_EVENT_ID),
+      ).rejects.toMatchObject({ code: 'INVALID_TICKET' });
+
+      expect(gateway.broadcastTicketValidated).not.toHaveBeenCalled();
+    });
+
+    it('AC-4: evento fora da janela não gera aviso nem consome o ingresso', async () => {
+      eventRepo.findOne.mockResolvedValue(futureEvent());
+      ticketRepo.findOne.mockResolvedValue(activeTicket());
+
+      await expect(
+        service.validateTicket(signedQr('ticket-1', FUTURE_EVENT_ID), GATE_USER, FUTURE_EVENT_ID),
+      ).rejects.toMatchObject({ code: 'EVENT_NOT_ACTIVE' });
+
+      expect(gateway.broadcastTicketValidated).not.toHaveBeenCalled();
+      expect(ticketRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('AC-5: WebSocket fora do ar não impede a entrada', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue(activeTicket());
+      gateway.broadcastTicketValidated.mockImplementation(() => {
+        throw new Error('socket server not initialised');
+      });
+
+      const result = await service.validateTicket(
+        signedQr('ticket-1', LIVE_EVENT_ID),
+        GATE_USER,
+        LIVE_EVENT_ID,
+      );
+
+      // O portão é físico: uma fila não pode parar porque o socket caiu
+      expect(result.valid).toBe(true);
+      expect(ticketRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ status: TicketStatus.USED }),
+      );
+    });
+
+    it('AC-6: o aviso não carrega nada do portador', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue(activeTicket());
+
+      await service.validateTicket(signedQr('ticket-1', LIVE_EVENT_ID), GATE_USER, LIVE_EVENT_ID);
+
+      // A sala event:{id} é pública — o mapa de assentos depende disso.
+      // Só podem sair ids e horário.
+      const args = gateway.broadcastTicketValidated.mock.calls[0];
+      const serialised = JSON.stringify(args);
+      expect(serialised).not.toContain('2024001234');
+      expect(serialised).not.toContain('student');
+      expect(serialised).not.toContain('Plateia-1-1');
     });
   });
 

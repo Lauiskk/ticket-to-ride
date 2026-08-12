@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useQuery } from '@tanstack/react-query';
 import QRCode from 'react-qr-code';
 import { GiTicket } from 'react-icons/gi';
 import { api } from '../lib/api';
+import { useTicketSocket } from '../hooks/useTicketSocket';
 import type { Ticket } from '../types';
 
 export function MyTicketsPage() {
@@ -15,6 +16,11 @@ export function MyTicketsPage() {
       return res.data;
     },
   });
+
+  // Listen on every event this person holds a ticket for, so the badge flips to
+  // "Utilizado" the moment the gate reads it (SPEC_CP18 RF-2).
+  const eventIds = useMemo(() => (tickets ?? []).map((t) => t.eventId), [tickets]);
+  useTicketSocket(eventIds);
 
   const [shareLink, setShareLink] = useState<{ ticketId: string; url: string } | null>(null);
   const [sharing, setSharing] = useState<string | null>(null);

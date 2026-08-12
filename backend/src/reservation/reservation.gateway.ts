@@ -80,4 +80,20 @@ export class ReservationGateway implements OnGatewayConnection, OnGatewayDisconn
   broadcastSeatsReserved(eventId: string, seatIds: string[]): void {
     this.broadcastSeatUpdate(eventId, seatIds, 'reserved');
   }
+
+  /**
+   * A ticket has just been consumed at the gate (SPEC_CP18 RF-1).
+   *
+   * The room `event:{id}` is public — the seat map depends on that — so the
+   * payload carries **only ids and a timestamp**. Anyone listening already knew
+   * that seat was sold; learning it walked in tells them nothing new. Holder
+   * name, document and seat label stay out of here on purpose (RNF-1).
+   */
+  broadcastTicketValidated(eventId: string, ticketId: string, validatedAt: Date): void {
+    this.server.to(`event:${eventId}`).emit('ticket_validated', {
+      eventId,
+      ticketId,
+      validatedAt: validatedAt.toISOString(),
+    });
+  }
 }
