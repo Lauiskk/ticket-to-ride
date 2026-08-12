@@ -121,14 +121,76 @@ export function PaymentModal(props: PaymentModalProps) {
   );
 }
 
+
+/**
+ * The reservation countdown, isolated on purpose.
+ *
+ * This ticked in the modal's own state, so every second re-rendered the whole
+ * modal — including the Stripe Elements subtree, which is an iframe host and
+ * the most expensive thing on the screen. One character of text changing was
+ * dragging the entire checkout through React 60 times a minute. That is what
+ * made the popup feel heavy.
+ *
+ * It owns its interval and reports expiry upward once, and nothing else in the
+ * modal re-renders while it counts.
+ */
+function Countdown({
+  expiresAt,
+  paused,
+  onExpire,
+}: {
+  expiresAt: string;
+  paused: boolean;
+  onExpire: () => void;
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(() => remainingSeconds(expiresAt));
+  const fired = useRef(false);
+
+  useEffect(() => {
+    if (paused) return;
+
+    const id = setInterval(() => {
+      const left = remainingSeconds(expiresAt);
+      setSecondsLeft(left);
+
+      if (left <= 0 && !fired.current) {
+        fired.current = true;
+        clearInterval(id);
+        onExpire();
+      }
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [expiresAt, paused, onExpire]);
+
+  const low = secondsLeft < 120;
+
+  return (
+    <span
+      className={`font-mono text-sm font-bold px-3 py-1 rounded-full whitespace-nowrap ${
+        low ? 'bg-board-crimson/20 text-board-crimson' : 'bg-board-gold/20 text-board-gold'
+      }`}
+      aria-label="Tempo restante da reserva"
+    >
+      {formatTime(secondsLeft)}
+    </span>
+  );
+}
+
+function remainingSeconds(expiresAt: string): number {
+  return Math.max(Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000), 0);
+}
+
 // ─── Shared chrome ────────────────────────────────────────────────────────────
 
 function Header({
   state,
-  secondsLeft,
+  expiresAt,
+  onExpire,
 }: {
   state: PaymentState;
-  secondsLeft: number;
+  expiresAt: string;
+  onExpire: () => void;
 }) {
   const title =
     state === 'success'
@@ -143,23 +205,12 @@ function Header({
               ? 'Processando...'
               : 'Finalizar pagamento';
 
-  const timerIsLow = secondsLeft < 120;
-
   return (
     <div className="bg-board-navy border-b border-board-gold/30 px-6 py-4 sticky top-0 z-10">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-xl font-bold text-board-gold">{title}</h2>
         {state === 'paying' && (
-          <span
-            className={`font-mono text-sm font-bold px-3 py-1 rounded-full whitespace-nowrap ${
-              timerIsLow
-                ? 'bg-board-crimson/20 text-board-crimson animate-pulse'
-                : 'bg-board-gold/20 text-board-gold'
-            }`}
-            aria-label="Tempo restante da reserva"
-          >
-            {formatTime(secondsLeft)}
-          </span>
+          <Countdown expiresAt={expiresAt} paused={false} onExpire={onExpire} />
         )}
       </div>
     </div>
@@ -287,28 +338,12 @@ function StripeCheckout({
   const [slowWebhook, setSlowWebhook] = useState(false);
   /** Payment cleared; we are waiting on the ticket itself. */
   const [issuing, setIssuing] = useState(false);
-  const [secondsLeft, setSecondsLeft] = useState(() =>
-    Math.max(Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000), 0),
-  );
 
   const cancelled = useRef(false);
   useEffect(() => () => { cancelled.current = true; }, []);
 
-  // Reservation countdown
-  useEffect(() => {
-    if (state !== 'paying') return;
-    const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setState('expired');
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [state]);
+  // Expiry now comes from <Countdown>, which owns its own tick
+  const handleExpire = useCallback(() => setState('expired'), []);
 
   /**
    * Stripe approved the card, but "paid" only becomes true once our backend
@@ -389,7 +424,7 @@ function StripeCheckout({
 
   return (
     <>
-      <Header state={state} secondsLeft={secondsLeft} />
+      <Header state={state} expiresAt={expiresAt} onExpire={handleExpire} />
 
       <div className="px-6 py-6">
         {(state === 'paying' || state === 'processing') && (
@@ -495,24 +530,8 @@ function SimulatedCheckout({
 }: PaymentModalProps) {
   const [state, setState] = useState<PaymentState>('paying');
   const [ticketCount, setTicketCount] = useState(0);
-  const [secondsLeft, setSecondsLeft] = useState(() =>
-    Math.max(Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000), 0),
-  );
 
-  useEffect(() => {
-    if (state !== 'paying') return;
-    const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          setState('expired');
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [state]);
+  const handleExpire = useCallback(() => setState('expired'), []);
 
   const handleConfirm = useCallback(async () => {
     setState('processing');
@@ -529,7 +548,7 @@ function SimulatedCheckout({
 
   return (
     <>
-      <Header state={state} secondsLeft={secondsLeft} />
+      <Header state={state} expiresAt={expiresAt} onExpire={handleExpire} />
 
       <div className="px-6 py-6">
         {(state === 'paying' || state === 'processing') && (

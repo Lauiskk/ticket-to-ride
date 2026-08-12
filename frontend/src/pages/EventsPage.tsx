@@ -104,14 +104,14 @@ export function EventsPage() {
         {!isLoading && !isError && events.length > 0 && (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {events.map((event, i) => (
-                <motion.div
+              {events.map((event) => (
+                // No per-index stagger: with 12 cards the last one landed 600 ms
+                // after the first, which read as "the site is slow" — because we
+                // told it to be. Hover is a CSS transform now: the compositor
+                // handles it without React or Framer Motion in the loop.
+                <div
                   key={event.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  whileHover={{ scale: 1.02, rotateY: 2 }}
-                  className="card-game group"
+                  className="card-game group transition-transform duration-150 ease-out hover:-translate-y-0.5"
                 >
                   <Link to={`/events/${event.id}`}>
                     {/* Real artwork from Ticketmaster/TMDb when we have it.
@@ -158,7 +158,7 @@ export function EventsPage() {
                       </div>
                     </div>
                   </Link>
-                </motion.div>
+                </div>
               ))}
             </div>
 

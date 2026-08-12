@@ -39,35 +39,26 @@ export function HomePage() {
           </div>
         </Parallax>
 
-        {/* Floating decorative elements */}
-        <motion.div
-          className="absolute top-20 right-20 text-board-gold/20 text-3xl z-10"
-          animate={{ y: [0, -8, 0], rotate: [0, 5, 0] }}
-          transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
-        >
+        {/*
+          Decorative icons — static.
+
+          These used to be four `repeat: Infinity` loops drifting up and down
+          forever. Four permanent animation frames, running whether or not the
+          hero was on screen, competing with everything the user was actually
+          trying to do. The icons still set the scene; they just stopped moving.
+        */}
+        <div className="absolute top-20 right-20 text-board-gold/20 text-3xl z-10" aria-hidden>
           <GiTicket />
-        </motion.div>
-        <motion.div
-          className="absolute top-1/3 left-16 text-board-crimson/15 text-2xl z-10"
-          animate={{ y: [0, -8, 0], rotate: [0, -5, 0] }}
-          transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut', delay: 2 }}
-        >
+        </div>
+        <div className="absolute top-1/3 left-16 text-board-crimson/15 text-2xl z-10" aria-hidden>
           <GiMusicalNotes />
-        </motion.div>
-        <motion.div
-          className="absolute bottom-1/3 right-16 text-board-emerald/15 text-2xl z-10"
-          animate={{ y: [0, -8, 0], rotate: [0, 3, 0] }}
-          transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut', delay: 4 }}
-        >
+        </div>
+        <div className="absolute bottom-1/3 right-16 text-board-emerald/15 text-2xl z-10" aria-hidden>
           <GiTheater />
-        </motion.div>
-        <motion.div
-          className="absolute top-2/3 left-1/4 text-board-gold/10 text-4xl z-10"
-          animate={{ y: [0, -8, 0], rotate: [0, -3, 0] }}
-          transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
-        >
+        </div>
+        <div className="absolute top-2/3 left-1/4 text-board-gold/10 text-4xl z-10" aria-hidden>
           <GiFilmProjector />
-        </motion.div>
+        </div>
 
         {/* Hero content */}
         <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">

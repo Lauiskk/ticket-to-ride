@@ -1,8 +1,64 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { HalfPriceSelector } from './HalfPriceSelector';
 import { formatMoney } from '../lib/eventStatus';
 import type { Seat, HalfPriceClaim } from '../types';
+
+
+/**
+ * One seat.
+ *
+ * Extracted and memoized because a large venue renders **a thousand** of these.
+ * Before, each was a `motion.button`: a Framer Motion component with its own
+ * animation subscription and per-frame work. Selecting a single seat re-rendered
+ * all thousand, which is exactly what made the map feel frozen.
+ *
+ * A seat is a button. It only re-renders when its own status or selection
+ * changes, and its feedback is a CSS transition — the browser handles that on
+ * the compositor without React knowing.
+ */
+const SeatButton = memo(
+  function SeatButton({
+    seat,
+    selected,
+    sectionName,
+    onToggle,
+  }: {
+    seat: Seat;
+    selected: boolean;
+    sectionName: string;
+    onToggle: (seatId: string, status: string) => void;
+  }) {
+    const available = seat.status === 'available';
+
+    const tone = selected
+      ? 'bg-board-crimson text-white shadow-sm'
+      : available
+        ? 'bg-board-gold/80 hover:bg-board-gold cursor-pointer'
+        : 'bg-board-navy/25 text-board-navy/40 cursor-not-allowed';
+
+    return (
+      <button
+        type="button"
+        disabled={!available && !selected}
+        onClick={() => onToggle(seat.id, seat.status)}
+        aria-pressed={selected}
+        aria-label={`${sectionName}, fila ${seat.row}, assento ${seat.number}${available ? '' : ' (indisponível)'}`}
+        title={`${sectionName} · Fila ${seat.row} · Assento ${seat.number}`}
+        className={`w-8 h-8 rounded text-xs font-medium flex items-center justify-center
+                    transition-[background-color,transform] duration-150 ease-out
+                    active:scale-90 ${selected ? 'scale-105' : ''} ${tone}`}
+      >
+        {seat.number}
+      </button>
+    );
+  },
+  // Nothing else can change a seat's appearance
+  (prev, next) =>
+    prev.seat.id === next.seat.id &&
+    prev.seat.status === next.seat.status &&
+    prev.selected === next.selected,
+);
 
 interface SeatMapProps {
   seats: Seat[];
@@ -43,21 +99,21 @@ export function SeatMap({
     return map;
   }, [seats]);
 
-  const toggleSeat = (seatId: string, status: string) => {
-    if (status !== 'available') return;
+  // Stable identity: a new function every render would defeat the memo on all
+  // thousand seats.
+  const toggleSeat = useCallback((seatId: string, status: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(seatId)) next.delete(seatId);
-      else next.add(seatId);
+      if (next.has(seatId)) {
+        next.delete(seatId);
+        return next;
+      }
+      // Only a free seat can be picked; deselecting is always allowed
+      if (status !== 'available') return prev;
+      next.add(seatId);
       return next;
     });
-  };
-
-  const getSeatColor = (seat: Seat) => {
-    if (selectedIds.has(seat.id)) return 'bg-board-crimson text-white shadow-md scale-110';
-    if (seat.status === 'available') return 'bg-board-gold/80 hover:bg-board-gold cursor-pointer hover:scale-105';
-    return 'bg-board-navy/30 cursor-not-allowed opacity-50';
-  };
+  }, []);
 
   // Preview only — the server recalculates from event.price (SPEC_CP12 RF-10)
   const halfCount = halfPriceClaims.length;
@@ -83,7 +139,9 @@ export function SeatMap({
 
       {/* Seat grid by section */}
       {Array.from(sections.entries()).map(([sectionName, rows]) => (
-        <div key={sectionName} className="mb-8">
+        // `content-visibility` lets the browser skip layout/paint for sections
+        // scrolled out of view — a 1000-seat venue is mostly off-screen.
+        <div key={sectionName} className="mb-8 [content-visibility:auto] [contain-intrinsic-size:auto_320px]">
           <h3 className="font-display text-lg font-semibold text-board-navy mb-3">{sectionName}</h3>
           <div className="space-y-2">
             {Array.from(rows.entries()).map(([rowName, rowSeats]) => (
@@ -91,15 +149,13 @@ export function SeatMap({
                 <span className="w-8 text-xs text-board-navy/50 font-medium">{rowName}</span>
                 <div className="flex gap-1 flex-wrap">
                   {rowSeats.map((seat) => (
-                    <motion.button
+                    <SeatButton
                       key={seat.id}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={() => toggleSeat(seat.id, seat.status)}
-                      className={`w-8 h-8 rounded text-xs font-medium flex items-center justify-center transition-all duration-150 ${getSeatColor(seat)}`}
-                      title={`${sectionName} - Fila ${seat.row} - Assento ${seat.number} (${seat.status})`}
-                    >
-                      {seat.number}
-                    </motion.button>
+                      seat={seat}
+                      selected={selectedIds.has(seat.id)}
+                      sectionName={sectionName}
+                      onToggle={toggleSeat}
+                    />
                   ))}
                 </div>
               </div>

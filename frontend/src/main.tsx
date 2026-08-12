@@ -3,6 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ParallaxProvider } from 'react-scroll-parallax';
+import { MotionConfig } from 'framer-motion';
+import { DURATION, EASE } from './lib/motion';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -23,13 +25,20 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <ErrorBoundary>
       <BrowserRouter>
         <QueryClientProvider client={queryClient}>
-          <ParallaxProvider>
-            <AuthProvider>
-              <ToastProvider>
-                <App />
-              </ToastProvider>
-            </AuthProvider>
-          </ParallaxProvider>
+          {/*
+            `reducedMotion="user"` makes every Framer Motion animation in the app
+            obey the operating system setting. Someone with a vestibular disorder
+            who turned motion off was still getting the full treatment.
+          */}
+          <MotionConfig reducedMotion="user" transition={{ duration: DURATION.base, ease: EASE }}>
+            <ParallaxProvider>
+              <AuthProvider>
+                <ToastProvider>
+                  <App />
+                </ToastProvider>
+              </AuthProvider>
+            </ParallaxProvider>
+          </MotionConfig>
         </QueryClientProvider>
       </BrowserRouter>
     </ErrorBoundary>
