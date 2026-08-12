@@ -17,6 +17,14 @@ import { Seat } from '../event/entities/seat.entity';
  * a real DB are covered separately.
  */
 
+/**
+ * Kept in sync with `eventDefinitions` in seed.service.ts. If you add an event
+ * to the seed, update these two numbers — the assertions below are what stops
+ * the seed from silently shrinking back to a single demo event.
+ */
+const SEEDED_EVENT_COUNT = 15;
+const SEEDED_SEAT_COUNT = 5955;
+
 describe('SeedService', () => {
   let seedService: SeedService;
   let userRepo: jest.Mocked<Repository<User>>;
@@ -68,16 +76,19 @@ describe('SeedService', () => {
 
       await seedService.run();
 
-      // Should create 4 users
+      // Should create 4 users: organizer, 2 clients, gate
       expect(userRepo.save).toHaveBeenCalledTimes(4);
 
-      // Should create 1 event
-      expect(eventRepo.save).toHaveBeenCalledTimes(1);
+      // One save per seeded event
+      expect(eventRepo.save).toHaveBeenCalledTimes(SEEDED_EVENT_COUNT);
 
-      // Should create seats (250 total: 50 numbered + 200 GA)
-      expect(seatRepo.save).toHaveBeenCalledTimes(1);
-      const savedSeats = seatRepo.save.mock.calls[0][0] as Partial<Seat>[];
-      expect(savedSeats.length).toBe(250);
+      // Seats are written in batches of 500, so the call count tracks batches,
+      // not events — assert on the seats actually produced instead.
+      const totalSeats = seatRepo.save.mock.calls.reduce(
+        (sum, call) => sum + (call[0] as Partial<Seat>[]).length,
+        0,
+      );
+      expect(totalSeats).toBe(SEEDED_SEAT_COUNT);
     });
 
     it('running seed twice produces same result (idempotent)', async () => {
@@ -112,8 +123,8 @@ describe('SeedService', () => {
 
       // First run created the expected counts
       expect(firstRunUserSaves).toBe(4);
-      expect(firstRunEventSaves).toBe(1);
-      expect(firstRunSeatSaves).toBe(1);
+      expect(firstRunEventSaves).toBe(SEEDED_EVENT_COUNT);
+      expect(firstRunSeatSaves).toBeGreaterThan(0);
     });
 
     it('creates users with correct roles', async () => {

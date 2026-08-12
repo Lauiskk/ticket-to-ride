@@ -132,11 +132,21 @@ describe('TicketSignerService', () => {
             expect(typeof parsed.sig).toBe('string');
             expect(parsed.sig.length).toBeGreaterThan(0);
 
-            // No PII fields
-            expect(qrString).not.toContain('email');
-            expect(qrString).not.toContain('name');
-            expect(qrString).not.toContain('phone');
-            expect(qrString).not.toContain('@');
+            // No PII fields.
+            //
+            // This has to be asserted on the KEYS, not on the serialized string.
+            // Scanning the whole JSON for "name"/"email"/"@" also inspects the
+            // seat identifier, which is free text an organizer controls — a
+            // section called "Camarote Name" or a stage named "@Live" would fail
+            // a payload that carries no PII at all. fast-check found exactly
+            // that: seatIdentifier "name-0-1".
+            const piiKey = /e-?mail|name|nome|phone|telefone|cpf|document/i;
+            for (const key of Object.keys(parsed)) {
+              expect(key).not.toMatch(piiKey);
+            }
+
+            // And the only free-text value present is the seat we passed in
+            expect(parsed.seat).toBe(payload.seatIdentifier);
           },
         ),
         { numRuns: 100 },
