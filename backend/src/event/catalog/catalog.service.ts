@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { TicketmasterClient } from './ticketmaster.client';
 import { TmdbClient } from './tmdb.client';
-import { CatalogSearchResult } from './catalog.interfaces';
+import { CatalogSearchResult, CatalogSearchFilters } from './catalog.interfaces';
 import { ExternalServiceError } from '../../shared/errors';
 
 /**
@@ -50,10 +50,10 @@ export class CatalogService {
   /**
    * Search Ticketmaster with cache-first fallback.
    */
-  async searchTicketmaster(query: string, page = 0, size = 20): Promise<CatalogSearchResult> {
-    const cacheKey = `${CACHE_PREFIX}tm:${query}:${page}:${size}`;
-    return this.withCacheFallback(cacheKey, () =>
-      this.ticketmasterClient.search(query, page, size),
+  async searchTicketmaster(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
+    return this.withCacheFallback(
+      this.cacheKey('tm', filters),
+      () => this.ticketmasterClient.search(filters),
       'Ticketmaster',
     );
   }
@@ -61,10 +61,25 @@ export class CatalogService {
   /**
    * Search TMDb with cache-first fallback.
    */
-  async searchTmdb(query: string, page = 1): Promise<CatalogSearchResult> {
-    const cacheKey = `${CACHE_PREFIX}tmdb:${query}:${page}`;
-    return this.withCacheFallback(cacheKey, () =>
-      this.tmdbClient.search(query, page),
+  async searchTmdb(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
+    return this.withCacheFallback(
+      this.cacheKey('tmdb', filters),
+      () => this.tmdbClient.search({ ...filters, page: (filters.page ?? 0) + 1 }),
+      'TMDb',
+    );
+  }
+
+  /**
+   * Movies currently in Brazilian cinemas (SPEC_CP13).
+   *
+   * Separate from search on purpose: "what can I put on sale tonight" is a
+   * different question from "find me this title", and the answer comes from a
+   * different endpoint.
+   */
+  async nowPlaying(page = 0): Promise<CatalogSearchResult> {
+    return this.withCacheFallback(
+      `${CACHE_PREFIX}tmdb:nowplaying:${page}`,
+      () => this.tmdbClient.nowPlaying(page + 1),
       'TMDb',
     );
   }
@@ -72,10 +87,12 @@ export class CatalogService {
   /**
    * Search both sources and merge results.
    */
-  async searchAll(query: string, page = 0): Promise<CatalogSearchResult> {
+  async searchAll(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
+    const page = filters.page ?? 0;
+
     const [tmResult, tmdbResult] = await Promise.allSettled([
-      this.searchTicketmaster(query, page),
-      this.searchTmdb(query, page + 1), // TMDb is 1-indexed
+      this.searchTicketmaster(filters),
+      this.searchTmdb(filters),
     ]);
 
     const tmItems = tmResult.status === 'fulfilled' ? tmResult.value.items : [];
@@ -144,6 +161,23 @@ export class CatalogService {
 
       throw new ExternalServiceError(serviceName);
     }
+  }
+
+  /**
+   * Cache key covering every filter — two searches that differ only by city are
+   * different questions and must not share an answer.
+   */
+  private cacheKey(source: string, filters: CatalogSearchFilters): string {
+    const parts = [
+      filters.query ?? '',
+      filters.countryCode ?? '',
+      filters.city ?? '',
+      filters.classificationName ?? '',
+      filters.startDateTime ?? '',
+      filters.page ?? 0,
+      filters.size ?? 20,
+    ];
+    return `${CACHE_PREFIX}${source}:${parts.join('|')}`;
   }
 
   // ─── Cache helpers ──────────────────────────────────────────────────────────

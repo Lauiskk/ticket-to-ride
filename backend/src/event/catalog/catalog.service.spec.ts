@@ -69,7 +69,7 @@ describe('CatalogService', () => {
     it('returns API result and caches it on success', async () => {
       ticketmasterClient.search.mockResolvedValue(mockResult);
 
-      const result = await service.searchTicketmaster('rock', 0);
+      const result = await service.searchTicketmaster({ query: 'rock', page: 0 });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].name).toBe('Rock Show');
@@ -78,12 +78,13 @@ describe('CatalogService', () => {
 
     it('returns cached results when API fails', async () => {
       // Pre-populate cache
-      const cacheKey = 'catalog:tm:rock:0:20';
+      // Chave inclui todos os filtros: query|country|city|classification|startDate|page|size
+      const cacheKey = 'catalog:tm:rock|||||0|20';
       mockRedis[cacheKey] = JSON.stringify(mockResult);
 
       ticketmasterClient.search.mockRejectedValue(new Error('Network timeout'));
 
-      const result = await service.searchTicketmaster('rock', 0);
+      const result = await service.searchTicketmaster({ query: 'rock', page: 0 });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].name).toBe('Rock Show');
@@ -92,17 +93,17 @@ describe('CatalogService', () => {
     it('throws ExternalServiceError when API fails and no cache', async () => {
       ticketmasterClient.search.mockRejectedValue(new Error('Network timeout'));
 
-      await expect(service.searchTicketmaster('rock', 0)).rejects.toThrow(ExternalServiceError);
+      await expect(service.searchTicketmaster({ query: 'rock', page: 0 })).rejects.toThrow(ExternalServiceError);
     });
 
     it('returns cached results when API returns empty results', async () => {
       // Pre-populate cache
-      const cacheKey = 'catalog:tm:jazz:0:20';
+      const cacheKey = 'catalog:tm:jazz|||||0|20';
       mockRedis[cacheKey] = JSON.stringify(mockResult);
 
       ticketmasterClient.search.mockResolvedValue(emptyResult);
 
-      const result = await service.searchTicketmaster('jazz', 0);
+      const result = await service.searchTicketmaster({ query: 'jazz', page: 0 });
 
       expect(result.items).toHaveLength(1); // Got cached, not empty
     });
@@ -110,7 +111,7 @@ describe('CatalogService', () => {
     it('throws ExternalServiceError when API returns empty and no cache (Req 4.4)', async () => {
       ticketmasterClient.search.mockResolvedValue(emptyResult);
 
-      await expect(service.searchTicketmaster('nonexistent', 0)).rejects.toThrow(
+      await expect(service.searchTicketmaster({ query: 'nonexistent', page: 0 })).rejects.toThrow(
         ExternalServiceError,
       );
     });
@@ -129,7 +130,7 @@ describe('CatalogService', () => {
     it('returns API result on success', async () => {
       tmdbClient.search.mockResolvedValue(tmdbResult);
 
-      const result = await service.searchTmdb('fight', 1);
+      const result = await service.searchTmdb({ query: 'fight', page: 1 });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].name).toBe('Fight Club');
@@ -138,7 +139,7 @@ describe('CatalogService', () => {
     it('throws ExternalServiceError when API fails and no cache', async () => {
       tmdbClient.search.mockRejectedValue(new Error('API error'));
 
-      await expect(service.searchTmdb('fight', 1)).rejects.toThrow(ExternalServiceError);
+      await expect(service.searchTmdb({ query: 'fight', page: 1 })).rejects.toThrow(ExternalServiceError);
     });
   });
 
@@ -152,7 +153,7 @@ describe('CatalogService', () => {
         pageSize: 20,
       });
 
-      const result = await service.searchAll('test', 0);
+      const result = await service.searchAll({ query: 'test', page: 0 });
 
       expect(result.items).toHaveLength(2);
       expect(result.items[0].source).toBe('ticketmaster');
@@ -163,7 +164,7 @@ describe('CatalogService', () => {
       ticketmasterClient.search.mockResolvedValue(mockResult);
       tmdbClient.search.mockRejectedValue(new Error('TMDb down'));
 
-      const result = await service.searchAll('test', 0);
+      const result = await service.searchAll({ query: 'test', page: 0 });
 
       expect(result.items).toHaveLength(1);
       expect(result.items[0].source).toBe('ticketmaster');
@@ -173,7 +174,7 @@ describe('CatalogService', () => {
       ticketmasterClient.search.mockRejectedValue(new Error('TM down'));
       tmdbClient.search.mockRejectedValue(new Error('TMDb down'));
 
-      await expect(service.searchAll('test', 0)).rejects.toThrow(ExternalServiceError);
+      await expect(service.searchAll({ query: 'test', page: 0 })).rejects.toThrow(ExternalServiceError);
     });
   });
 });
