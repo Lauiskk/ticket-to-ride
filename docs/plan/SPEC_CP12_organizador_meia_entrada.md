@@ -107,8 +107,46 @@ ingressos a meio preço para estudantes, idosos e pessoas com deficiência. Sem 
 - Critério: total 150,00 para evento de 100,00; exatamente 1 ingresso meia; documento mascarado
   na resposta da portaria; ocupação batendo com os assentos vendidos.
 
+## Achado durante a implementação — RF-13
+
+A validação real reprovou o AC-3 na primeira tentativa: a cota contava **ingressos emitidos**,
+e um comprador em checkout ainda não tem ingresso. Dois compradores simultâneos furavam a cota.
+
+- RF-13: A cota conta as declarações de meia das reservas em `pending_payment` **e** `paid`,
+  não os ingressos emitidos. Uma reserva pendente ocupa a cota igual a uma paga.
+
+Também apareceu um efeito colateral do CP11: o evento ao vivo **não aparecia no catálogo**,
+porque `browse()` filtrava `date > now`. Um evento que começou há 30 min sumia da vitrine — o
+oposto do que faz uma bilheteria, que vende na porta. O corte passou a ser o mesmo da janela de
+entrada da portaria (+7 h), para que catálogo e portaria nunca discordem sobre o que está
+acontecendo.
+
 ## Status
-- [ ] Spec aprovada pelo usuário
-- [ ] Testes escritos — vermelhos
-- [ ] Implementação concluída — testes verdes
-- [ ] Validação real executada
+- [x] Spec aprovada pelo usuário (decisão "declaração + documento", 2026-08-11)
+- [x] Testes escritos — vermelhos (8 ACs de meia + 3 de portaria)
+- [x] Implementação concluída — testes verdes (68/68)
+- [x] Validação real executada — 2026-08-11
+
+### Evidência da validação real
+
+| Verificação | Resultado |
+|---|---|
+| Evento R$ 30, 1 inteira + 1 meia | `totalAmount: 45` — AC-1 ✔ |
+| Preço enviado pelo cliente no corpo | ignorado, total 200 no evento de 100 — AC-2 ✔ |
+| Cota esgotada, nova meia | **409** `HALF_PRICE_QUOTA_EXCEEDED`, assento intocado — AC-3 ✔ |
+| Inteira no mesmo assento logo depois | 201, total 30 |
+| Reserva paga | 2 ingressos, exatamente 1 com `is_half_price` + categoria + documento — AC-5 ✔ |
+| Portaria valida a meia | `isHalfPrice: true`, `student`, `holderDocumentMasked: "•••4001•••"` — AC-6 ✔ |
+| `GET /events/:id/metrics` (dono) | ocupação 5%, receita R$ 75, 3 emitidos, 2 validados, 1 meia — AC-8 ✔ |
+| `GET /events/:id/metrics` (cliente) | **403** — AC-10 ✔ |
+
+### Validação pelo navegador (executada)
+
+| Tela | Resultado |
+|---|---|
+| Painel do organizador | "À venda"/"Rascunhos" em português, cota de meia por evento |
+| Métricas expandidas | ocupação, vendidos/reserva/livres, receita, por setor |
+| Checkout com meia | assento cai para R$ 15,00, total R$ 45,00, categorias e termo aparecem |
+| Botão antes do documento | bloqueado com "Complete os dados da meia-entrada" |
+| Reserva criada pela UI | `total_amount 45.00` + `half_price_claims` com categoria `senior` |
+| Cancelar no modal | reserva `cancelled`, 0 assentos presos |

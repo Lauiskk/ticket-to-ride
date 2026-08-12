@@ -21,3 +21,4 @@ Thumbs.db
 # Scratch de execucao local
 backend/_*.txt
 frontend/tsconfig.tsbuildinfo
+.claude/
