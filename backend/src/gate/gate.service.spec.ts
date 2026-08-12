@@ -95,6 +95,63 @@ describe('GateService (SPEC_CP11)', () => {
     });
   });
 
+  // ─── SPEC_CP12 AC-6 / AC-7 ──────────────────────────────────────────────────
+
+  describe('SPEC_CP12 — meia-entrada na portaria', () => {
+    it('AC-6: ingresso de meia traz categoria e documento MASCARADO', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue({
+        id: 'ticket-1',
+        seatIdentifier: 'Plateia-1-1',
+        status: TicketStatus.ACTIVE,
+        isHalfPrice: true,
+        halfPriceCategory: 'student',
+        holderDocument: '2024001234',
+      } as Ticket);
+
+      const result = await service.validateTicket(
+        signedQr('ticket-1', LIVE_EVENT_ID),
+        GATE_USER,
+        LIVE_EVENT_ID,
+      );
+
+      expect(result.isHalfPrice).toBe(true);
+      expect(result.halfPriceCategory).toBe('student');
+      // Nunca o número inteiro
+      expect(result.holderDocumentMasked).not.toBe('2024001234');
+      expect(result.holderDocumentMasked).toContain('•');
+      // Mas com dígitos suficientes para conferir contra o documento físico
+      expect(result.holderDocumentMasked).toMatch(/\d{4}/);
+    });
+
+    it('AC-7: ingresso inteiro não expõe nenhum dado de documento', async () => {
+      eventRepo.findOne.mockResolvedValue(liveEvent());
+      ticketRepo.findOne.mockResolvedValue({
+        id: 'ticket-2',
+        seatIdentifier: 'Plateia-1-2',
+        status: TicketStatus.ACTIVE,
+        isHalfPrice: false,
+        halfPriceCategory: null,
+        holderDocument: null,
+      } as Ticket);
+
+      const result = await service.validateTicket(
+        signedQr('ticket-2', LIVE_EVENT_ID),
+        GATE_USER,
+        LIVE_EVENT_ID,
+      );
+
+      expect(result.isHalfPrice).toBe(false);
+      expect(result.halfPriceCategory).toBeNull();
+      expect(result.holderDocumentMasked).toBeNull();
+    });
+
+    it('mascara documentos curtos sem vazar nada', () => {
+      expect(GateService.maskDocument('123')).toBe('•••');
+      expect(GateService.maskDocument(null)).toBeNull();
+    });
+  });
+
   // ─── AC-7 ───────────────────────────────────────────────────────────────────
 
   describe('AC-7: mesmo ingresso duas vezes', () => {

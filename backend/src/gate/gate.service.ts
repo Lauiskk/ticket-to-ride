@@ -23,6 +23,11 @@ export interface ValidationResult {
   seatIdentifier: string;
   eventTitle?: string;
   validatedAt?: Date;
+  /** Half-price ticket — the operator must check the matching document (SPEC_CP12 RF-12). */
+  isHalfPrice?: boolean;
+  halfPriceCategory?: string | null;
+  /** Masked on purpose: enough to compare, not enough to harvest. */
+  holderDocumentMasked?: string | null;
   error?: { code: string; message: string; firstValidatedAt?: Date };
 }
 
@@ -141,7 +146,34 @@ export class GateService {
       seatIdentifier: ticket.seatIdentifier,
       eventTitle: event.title,
       validatedAt: now,
+      isHalfPrice: ticket.isHalfPrice,
+      halfPriceCategory: ticket.isHalfPrice ? ticket.halfPriceCategory : null,
+      holderDocumentMasked: ticket.isHalfPrice
+        ? GateService.maskDocument(ticket.holderDocument)
+        : null,
     };
+  }
+
+  /**
+   * Show just enough of the document for a human to compare it against the card
+   * in front of them, and no more (SPEC_CP12, considerações de segurança).
+   *
+   * A gate screen is read over shoulders, in a queue, sometimes photographed.
+   * The operator needs to confirm "this is the same document", not to learn the
+   * number — so we keep the middle and hide the rest.
+   */
+  static maskDocument(document: string | null): string | null {
+    if (!document) return null;
+
+    const trimmed = document.trim();
+    if (trimmed.length <= 4) return '•'.repeat(trimmed.length);
+
+    const visibleStart = Math.floor((trimmed.length - 4) / 2);
+    return (
+      '•'.repeat(visibleStart) +
+      trimmed.slice(visibleStart, visibleStart + 4) +
+      '•'.repeat(trimmed.length - visibleStart - 4)
+    );
   }
 
   // ─── Gate Agenda (SPEC_CP11 RF-4) ─────────────────────────────────────────
