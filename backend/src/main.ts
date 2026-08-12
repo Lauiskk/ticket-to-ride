@@ -7,6 +7,7 @@ import { AppValidationPipe } from './shared/pipes/app-validation.pipe';
 import helmet from 'helmet';
 import * as compression from 'compression';
 import * as cookieParser from 'cookie-parser';
+import { parseCorsOrigins } from './shared/config/cors';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
@@ -25,7 +26,9 @@ async function bootstrap(): Promise<void> {
   app.useGlobalInterceptors(new ResponseInterceptor());
 
   app.enableCors({
-    origin: configService.get<string>('cors.origin', 'http://localhost:5173'),
+    origin: parseCorsOrigins(
+      configService.get<string>('cors.origin', 'http://localhost:5173'),
+    ),
     credentials: true,
   });
 
