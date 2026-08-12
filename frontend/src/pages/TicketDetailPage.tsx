@@ -177,11 +177,18 @@ export function TicketDetailPage() {
                   {ticket.seatIdentifier}
                 </p>
               </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${status.className}`}
-              >
-                {status.label}
-              </span>
+              <div className="flex flex-col items-end gap-1.5">
+                <span
+                  className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${status.className}`}
+                >
+                  {status.label}
+                </span>
+                {ticket.isHalfPrice && (
+                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-board-crimson text-white">
+                    Meia
+                  </span>
+                )}
+              </div>
             </div>
 
             {event && (
@@ -197,6 +204,13 @@ export function TicketDetailPage() {
             <p className="text-board-navy/60 text-sm border-t border-board-parchment-dark pt-3">
               {status.note}
             </p>
+
+            {ticket.isHalfPrice && ticket.status === 'active' && (
+              <p className="text-sm text-board-crimson bg-board-crimson/10 rounded-lg px-3 py-2.5">
+                <strong>Meia-entrada.</strong> Leve o documento original que você declarou — sem
+                ele a portaria pode recusar a entrada.
+              </p>
+            )}
 
             {ticket.status === 'active' && (
               <div className="space-y-2">

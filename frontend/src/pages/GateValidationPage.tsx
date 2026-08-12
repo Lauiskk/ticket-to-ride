@@ -21,11 +21,19 @@ import type { ValidationResult, GateEventSummary } from '../types';
 /** How long the verdict stays up before the scanner is ready again. */
 const VERDICT_MS = 3000;
 
+const HALF_PRICE_LABEL: Record<string, string> = {
+  student: 'Estudante',
+  senior: '60+ anos',
+  pcd: 'PCD',
+};
+
 interface Verdict {
   tone: 'ok' | 'warn' | 'deny' | 'idle';
   icon: string;
   title: string;
   details: string;
+  /** Extra step the operator must perform before letting the person through. */
+  checkDocument?: { category: string; document: string };
 }
 
 function verdictFor(result: ValidationResult): Verdict {
@@ -37,6 +45,15 @@ function verdictFor(result: ValidationResult): Verdict {
       details: [result.eventTitle, result.seatIdentifier && `Assento ${result.seatIdentifier}`]
         .filter(Boolean)
         .join(' · '),
+      // A half-price ticket is valid AND conditional — the operator still has
+      // to see the document. Showing it as a separate panel (not a colour
+      // change) keeps "the ticket is real" and "now check the card" distinct.
+      checkDocument: result.isHalfPrice
+        ? {
+            category: HALF_PRICE_LABEL[result.halfPriceCategory ?? ''] ?? 'Meia-entrada',
+            document: result.holderDocumentMasked ?? '',
+          }
+        : undefined,
     };
   }
 
@@ -102,9 +119,12 @@ export function GateValidationPage() {
     refetchInterval: 60000,
   });
 
-  // Clear the verdict so the operator can scan the next person
+  // Clear the verdict so the operator can scan the next person.
+  // A half-price ticket needs a document check, which takes longer than reading
+  // a green screen — so it stays up until the operator dismisses it.
   useEffect(() => {
     if (!result) return;
+    if (result.valid && result.isHalfPrice) return;
     const timer = setTimeout(() => setResult(null), VERDICT_MS);
     return () => clearTimeout(timer);
   }, [result]);
@@ -280,6 +300,27 @@ export function GateValidationPage() {
             </span>
             <h2 className="font-display text-4xl font-bold text-white">{verdict.title}</h2>
             <p className="text-white/80 text-lg mt-2 max-w-sm">{verdict.details}</p>
+
+            {verdict.checkDocument && (
+              <div className="mt-6 bg-black/25 rounded-xl px-6 py-4 max-w-sm w-full">
+                <p className="font-display text-2xl font-bold text-white tracking-wide">
+                  MEIA — CONFERIR DOCUMENTO
+                </p>
+                <p className="text-white/85 mt-1">{verdict.checkDocument.category}</p>
+                <p className="font-ticket text-lg text-white mt-2 tracking-widest">
+                  {verdict.checkDocument.document}
+                </p>
+                <p className="text-white/60 text-xs mt-2">
+                  Confira os dígitos visíveis contra o documento original.
+                </p>
+                <button
+                  onClick={() => setResult(null)}
+                  className="mt-4 w-full py-3 rounded-lg bg-white text-board-navy font-bold"
+                >
+                  Documento conferido — próximo
+                </button>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
