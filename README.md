@@ -298,10 +298,17 @@ npx jest --testPathPattern "nome-do-arquivo"
 ### Local (desenvolvimento)
 
 ```bash
-docker-compose up -d    # PostgreSQL 16 + Redis 7
+docker-compose up -d    # PostgreSQL 16 + Redis 7 + API
 npm run seed            # Popula dados iniciais
 npm run start:dev       # API com hot-reload na porta 3000
 ```
+
+O compose também sobe a API (`ttr-api`), montando `backend/src` e rodando
+`start:dev`. Se você editar o código com o contêiner rodando, prefira
+`docker compose up -d --build api` quando algo parecer não ter surtido efeito:
+bind mount do Windows não propaga eventos de arquivo, e o watcher já ficou horas
+servindo código antigo sem avisar. O `tsconfig` agora sonda arquivos
+(`watchOptions`), o que resolve o caso normal.
 
 ### Produção — Railway (API) + Vercel (frontend)
 
