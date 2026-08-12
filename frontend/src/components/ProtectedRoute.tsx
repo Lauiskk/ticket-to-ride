@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { roleHome } from '../lib/roleHome';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -9,7 +10,8 @@ interface ProtectedRouteProps {
 /**
  * Wraps routes that require authentication.
  * If not authenticated → redirect to /login.
- * If authenticated but wrong role → redirect to /events.
+ * If authenticated but wrong role → redirect to that role's own home
+ * (SPEC_CP11 RF-3), never blindly to the storefront.
  */
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
@@ -27,7 +29,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/events" replace />;
+    return <Navigate to={roleHome(user.role)} replace />;
   }
 
   return <>{children}</>;

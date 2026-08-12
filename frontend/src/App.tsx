@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { GuestRoute } from './components/GuestRoute';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { StoreRoute } from './components/StoreRoute';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -17,9 +18,31 @@ export function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<HomePage />} />
-        <Route path="events" element={<EventsPage />} />
-        <Route path="events/:id" element={<EventDetailPage />} />
+        {/* Buying surface — public, but closed to roles with no purchase path */}
+        <Route
+          index
+          element={
+            <StoreRoute>
+              <HomePage />
+            </StoreRoute>
+          }
+        />
+        <Route
+          path="events"
+          element={
+            <StoreRoute>
+              <EventsPage />
+            </StoreRoute>
+          }
+        />
+        <Route
+          path="events/:id"
+          element={
+            <StoreRoute>
+              <EventDetailPage />
+            </StoreRoute>
+          }
+        />
         <Route
           path="payment/:reservationId"
           element={

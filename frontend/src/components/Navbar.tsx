@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
 import { GiDiceSixFacesTwo, GiTheater } from 'react-icons/gi';
 import { TrainLogo } from './TrainLogo';
+import { roleHome, isStoreBlocked } from '../lib/roleHome';
 
 export function Navbar() {
   const { user, logout } = useAuth();
@@ -21,23 +22,31 @@ export function Navbar() {
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 group">
+          {/* Logo — points at whatever "home" means for this role */}
+          <Link to={roleHome(user?.role)} className="flex items-center gap-2 group">
             <TrainLogo className="w-9 h-9 group-hover:scale-110 transition-transform" />
             <span className="font-display text-xl font-bold text-board-parchment">
               Ticket to Ride
             </span>
+            {user?.role === 'gate' && (
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-board-gold/20 text-board-gold text-[10px] font-bold uppercase tracking-wider">
+                Portaria
+              </span>
+            )}
           </Link>
 
           {/* Navigation links */}
           <div className="hidden md:flex items-center gap-6">
-            <Link
-              to="/events"
-              className="text-board-parchment/80 hover:text-board-gold transition-colors font-medium flex items-center gap-1"
-            >
-              <GiTheater className="text-lg" />
-              Eventos
-            </Link>
+            {/* The gate never browses the catalogue (SPEC_CP11 RF-2) */}
+            {!isStoreBlocked(user?.role) && (
+              <Link
+                to="/events"
+                className="text-board-parchment/80 hover:text-board-gold transition-colors font-medium flex items-center gap-1"
+              >
+                <GiTheater className="text-lg" />
+                Eventos
+              </Link>
+            )}
 
             {user?.role === 'organizer' && (
               <Link
