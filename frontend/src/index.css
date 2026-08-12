@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased;
+  }
+
+  /* Custom scrollbar (board game feel) */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-board-parchment;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-board-wood-light rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-board-wood;
+  }
+}
+
+@layer components {
+  /* Card with board game styling */
+  .card-game {
+    @apply bg-white rounded-card shadow-card border border-board-parchment-dark/30
+           transition-all duration-300 ease-out overflow-hidden;
+  }
+  .card-game:hover {
+    @apply shadow-card-hover -translate-y-1;
+  }
+
+  /* Ticket-style card */
+  .ticket-card {
+    @apply bg-board-parchment rounded-lg shadow-ticket border-2 border-dashed border-board-wood-light
+           relative overflow-hidden;
+  }
+  .ticket-card::before {
+    content: '';
+    @apply absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-board-gold via-board-crimson to-board-gold;
+  }
+
+  /* Primary button (board game style) */
+  .btn-primary {
+    @apply px-6 py-3 bg-board-crimson text-white font-display font-semibold
+           rounded-lg shadow-md hover:bg-board-crimson-dark hover:shadow-lg
+           transform hover:-translate-y-0.5 transition-all duration-200
+           active:translate-y-0 active:shadow-sm;
+  }
+
+  /* Secondary button */
+  .btn-secondary {
+    @apply px-6 py-3 bg-board-navy text-white font-body font-medium
+           rounded-lg shadow-md hover:bg-board-navy-light hover:shadow-lg
+           transform hover:-translate-y-0.5 transition-all duration-200;
+  }
+
+  /* Gold accent button */
+  .btn-gold {
+    @apply px-6 py-3 bg-gradient-to-r from-board-gold to-board-gold-light text-board-navy
+           font-display font-semibold rounded-lg shadow-md
+           hover:shadow-lg transform hover:-translate-y-0.5 transition-all duration-200;
+  }
+
+  /* Section title */
+  .section-title {
+    @apply font-display text-3xl md:text-4xl font-bold text-board-navy;
+  }
+}
