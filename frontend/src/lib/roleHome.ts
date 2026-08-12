@@ -21,18 +21,28 @@ export function roleHome(role: UserRole | undefined): string {
 }
 
 /**
- * Roles that have no business in the buying flow (home, catalogue, event page).
- * The backend already rejects their purchase calls; this keeps the UI honest.
+ * Roles kept out of the storefront entirely (SPEC_CP11 RF-1).
  *
- * The organizer joined the gate here (SPEC_CP17 RF-1). They were landing on the
- * storefront, opening their own event and finding the buyer's seat map with a
- * "Reservar assentos" button — which `POST /reservations` refuses
- * (`@Roles(UserRole.CLIENT)`), but only after they picked seats and clicked.
- * Offering a door that is locked is worse than not showing the door.
+ * Only the gate: it is an operational device standing at a door, and every
+ * second spent on a catalogue is a second not spent reading tickets.
  *
- * A visitor with no account is NOT blocked: the storefront is public, and that
- * is the whole point of it.
+ * The organizer was briefly in this list (CP17) and it was the wrong call —
+ * people testing it said they could not get back to the start and that there
+ * was nowhere else to go. Blocking the store confused two different things:
+ * **not being able to buy** and **not being able to look**. Only the first is
+ * true, and it is `canBuyTickets` that says so (SPEC_CP19 RF-1).
  */
 export function isStoreBlocked(role: UserRole | undefined): boolean {
-  return role === 'gate' || role === 'organizer';
+  return role === 'gate';
+}
+
+/**
+ * Who the checkout is actually for.
+ *
+ * `POST /reservations` is `@Roles(CLIENT)`, so an organizer clicking "Reservar"
+ * gets a refusal after choosing seats. A visitor with no account counts as a
+ * buyer — they just have to sign in first, which the flow already handles.
+ */
+export function canBuyTickets(role: UserRole | undefined): boolean {
+  return role === undefined || role === 'client';
 }

@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
+import { resolveGoogleCallbackUrl } from '../../shared/config/google-callback';
 
 // passport-google-oauth20 types
 interface GoogleProfile {
@@ -29,12 +30,29 @@ export class GoogleStrategy extends PassportStrategy(
   'google',
 ) {
   constructor(configService: ConfigService) {
+    const configured = configService.get<string>('GOOGLE_CALLBACK_URL');
+    const callbackURL = resolveGoogleCallbackUrl({
+      callbackUrl: configured,
+      publicDomain: configService.get<string>('RAILWAY_PUBLIC_DOMAIN'),
+      port: configService.get<string>('PORT'),
+    });
+
     super({
       clientID: configService.get<string>('GOOGLE_CLIENT_ID'),
       clientSecret: configService.get<string>('GOOGLE_CLIENT_SECRET'),
-      callbackURL: configService.get<string>('GOOGLE_CALLBACK_URL'),
+      callbackURL,
       scope: ['email', 'profile'],
     });
+
+    // O endereço derivado tem que estar cadastrado no Google Cloud Console.
+    // Se não estiver, o erro vira `redirect_uri_mismatch` — que ao menos diz
+    // qual URL comparar, ao contrário do silêncio anterior.
+    if (!configured?.trim()) {
+      new Logger(GoogleStrategy.name).warn(
+        `GOOGLE_CALLBACK_URL não configurada — usando ${callbackURL}. ` +
+          'Confirme que esse endereço está autorizado no Google Cloud Console.',
+      );
+    }
   }
 
   validate(

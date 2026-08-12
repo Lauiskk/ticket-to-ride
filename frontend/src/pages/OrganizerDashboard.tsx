@@ -240,12 +240,26 @@ export function OrganizerDashboard() {
                   {/* As vendas moram na tela do evento, junto com o mapa de
                       ocupação — dois lugares mostrando os mesmos números é um
                       lugar a mais para eles discordarem (SPEC_CP17 RF-5). */}
-                  <Link
-                    to={`/organizer/events/${event.id}`}
-                    className="inline-block mt-3 text-sm text-board-crimson font-medium hover:underline"
-                  >
-                    {event.status === 'draft' ? 'Conferir a casa →' : 'Ver vendas e ocupação →'}
-                  </Link>
+                  <div className="mt-3 flex flex-wrap gap-4">
+                    <Link
+                      to={`/organizer/events/${event.id}`}
+                      className="text-sm text-board-crimson font-medium hover:underline"
+                    >
+                      {event.status === 'draft' ? 'Conferir a casa →' : 'Ver vendas e ocupação →'}
+                    </Link>
+
+                    {/* Conferir o que o cliente enxerga é parte do trabalho —
+                        e não dá para conferir uma vitrine que você não pode
+                        abrir (SPEC_CP19 RF-4). */}
+                    {event.status === 'published' && (
+                      <Link
+                        to={`/events/${event.id}`}
+                        className="text-sm text-board-navy/50 hover:text-board-navy hover:underline"
+                      >
+                        Ver na vitrine
+                      </Link>
+                    )}
+                  </div>
                 </div>
               );
             })}

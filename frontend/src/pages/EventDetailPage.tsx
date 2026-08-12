@@ -1,15 +1,18 @@
 import { useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { useQuery } from '@tanstack/react-query';
 import { GiTicket } from 'react-icons/gi';
 import { useEventDetail, useAvailableSeats } from '../hooks/useEvents';
 import { useSeatSocket } from '../hooks/useSeatSocket';
 import { SeatMap } from '../components/SeatMap';
 import { GeneralAdmissionSelector } from '../components/GeneralAdmissionSelector';
+import { OccupancyMap } from '../components/organizer/OccupancyMap';
 import { PaymentModal } from '../components/PaymentModal';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
-import type { Reservation, HalfPriceClaim } from '../types';
+import { canBuyTickets } from '../lib/roleHome';
+import type { Event, Reservation, HalfPriceClaim } from '../types';
 
 /**
  * Turn a backend error into something a buyer can act on.
@@ -40,6 +43,24 @@ export function EventDetailPage() {
   const { data: event, isLoading: loadingEvent, isError } = useEventDetail(id);
   const { data: seats, isLoading: loadingSeats, refetch: refetchSeats } = useAvailableSeats(id);
   const { connected } = useSeatSocket(id);
+
+  const canBuy = canBuyTickets(user?.role);
+
+  /**
+   * "Este evento é meu?" — perguntado só para organizador, e respondido pela
+   * lista dele mesmo. A resposta pública de `/events/:id` não traz (nem deve
+   * trazer) o `organizerId` (Req 6.4).
+   */
+  const { data: myEvents } = useQuery({
+    queryKey: ['my-events'],
+    queryFn: async () => {
+      const res = await api.get<Event[]>('/events/my/list');
+      return res.data;
+    },
+    enabled: user?.role === 'organizer',
+    staleTime: 1000 * 60,
+  });
+  const isMine = !!myEvents?.some((e) => e.id === id);
 
   const [isReserving, setIsReserving] = useState(false);
   const [error, setError] = useState('');
@@ -204,7 +225,11 @@ export function EventDetailPage() {
           <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
             <h2 className="font-display text-2xl font-semibold text-board-navy flex items-center gap-2">
               <GiTicket className="text-board-gold" />
-              {event.seatingType === 'numbered' ? 'Escolha seus assentos' : 'Selecione a quantidade'}
+              {!canBuy
+                ? 'Como está a casa'
+                : event.seatingType === 'numbered'
+                  ? 'Escolha seus assentos'
+                  : 'Selecione a quantidade'}
             </h2>
             <span
               className={`text-xs flex items-center gap-1.5 ${
@@ -225,7 +250,33 @@ export function EventDetailPage() {
             </span>
           </div>
 
-          {event.seatingType === 'numbered' ? (
+          {/*
+            Quem não compra ainda pode olhar (SPEC_CP19 RF-2).
+
+            O caminho antigo era esconder a loja inteira do organizador, e isso
+            o deixou sem para onde ir. Agora ele vê a mesma casa que o cliente
+            vê — em leitura, com o motivo escrito. O que ele não vê é um botão
+            que o servidor recusaria.
+          */}
+          {!canBuy ? (
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-5 bg-board-parchment/60 border border-board-parchment-dark rounded-lg px-4 py-3">
+                <p className="text-sm text-board-navy/70">
+                  {user?.role === 'organizer'
+                    ? isMine
+                      ? 'Este evento é seu — você está vendo a página como o cliente vê.'
+                      : 'Você está na vitrine como visitante. Organizadores não compram ingressos.'
+                    : 'Este perfil não compra ingressos.'}
+                </p>
+                {isMine && (
+                  <Link to={`/organizer/events/${id}`} className="btn-gold text-sm py-1.5 px-3">
+                    Abrir bilheteria →
+                  </Link>
+                )}
+              </div>
+              <OccupancyMap seats={seats || []} />
+            </div>
+          ) : event.seatingType === 'numbered' ? (
             <SeatMap
               seats={seats || []}
               price={Number(event.price)}
