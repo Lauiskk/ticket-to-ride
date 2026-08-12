@@ -27,12 +27,28 @@ export const entities = [
  * Used by both NestJS module and the CLI (for migrations).
  */
 export function getTypeOrmConfig(): TypeOrmModuleOptions {
+  const isDevelopment = process.env.NODE_ENV === 'development';
+
   return {
     type: 'postgres',
     url: process.env.DATABASE_URL,
     entities,
-    synchronize: process.env.NODE_ENV === 'development',
-    logging: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+    /**
+     * Schema sync.
+     *
+     * On in development, and opt-in elsewhere via `DB_SYNCHRONIZE=true`.
+     * The project has no migrations yet, so a fresh production database would
+     * otherwise start with **zero tables** and fail every query. Making it an
+     * explicit flag beats the alternative of lying about NODE_ENV to get a
+     * schema — and it stays off unless someone asks for it.
+     *
+     * Known limitation, documented in the README: real production wants
+     * migrations, not synchronize.
+     */
+    synchronize: isDevelopment || process.env.DB_SYNCHRONIZE === 'true',
+    /** Managed Postgres (Railway, Neon, Supabase) requires TLS. */
+    ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    logging: isDevelopment ? ['error', 'warn'] : ['error'],
     autoLoadEntities: true,
   };
 }

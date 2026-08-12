@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
@@ -19,8 +19,29 @@ import { Seat, SeatStatus } from '../event/entities/seat.entity';
  * Uses bcryptjs for password hashing.
  */
 @Injectable()
-export class SeedService {
+export class SeedService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SeedService.name);
+
+  /**
+   * Seed a freshly deployed environment on boot when `RUN_SEED_ON_BOOT=true`.
+   *
+   * The production image ships only `dist/`, so `npm run seed` (ts-node over
+   * `src/`) does not exist there — without this hook a deployed database stays
+   * empty and there is nothing to evaluate. Safe to leave on: `run()` returns
+   * early when any user already exists.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    if (process.env.RUN_SEED_ON_BOOT !== 'true') return;
+
+    try {
+      await this.run();
+    } catch (err) {
+      // Never take the API down over seeding — log and serve
+      this.logger.error(
+        `Boot seed failed: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
 
   constructor(
     @InjectRepository(User)

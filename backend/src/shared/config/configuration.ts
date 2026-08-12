@@ -54,6 +54,15 @@ export const envValidationSchema = Joi.object({
   RESERVATION_TTL_MINUTES: Joi.number().default(10).description(
     'Minutes before an unpaid reservation expires',
   ),
+  DB_SYNCHRONIZE: Joi.boolean().truthy('true').falsy('false').default(false).description(
+    'Create/update the schema from the entities on boot. No migrations yet — a fresh deploy needs this once.',
+  ),
+  DATABASE_SSL: Joi.boolean().truthy('true').falsy('false').default(false).description(
+    'Require TLS for the database connection (managed Postgres does)',
+  ),
+  RUN_SEED_ON_BOOT: Joi.boolean().truthy('true').falsy('false').default(false).description(
+    'Run the idempotent seed at startup — the production image has no ts-node to run it by hand',
+  ),
   SHARING_LINK_TTL_HOURS: Joi.number().default(48).description(
     'Hours before a sharing link expires',
   ),
