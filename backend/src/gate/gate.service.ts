@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ticket, TicketStatus } from '../ticket/entities/ticket.entity';
-import { Event } from '../event/entities/event.entity';
+import { Event, EventStatus } from '../event/entities/event.entity';
 import { TicketSignerService } from '../ticket/crypto/ticket-signer.service';
 import { AppError, ErrorCodes, TicketInvalidError, EventNotActiveError } from '../shared/errors';
 
@@ -25,6 +25,30 @@ export interface ValidationResult {
   validatedAt?: Date;
   error?: { code: string; message: string; firstValidatedAt?: Date };
 }
+
+/**
+ * One line of the gate's own agenda (SPEC_CP11 RF-4).
+ *
+ * Deliberately not the public event DTO: a gate operator does not need price,
+ * description or seat map — they need to know which door is open right now and
+ * how the queue is going. No buyer data ever appears here.
+ */
+export interface GateEventSummary {
+  id: string;
+  title: string;
+  venueName: string;
+  date: Date;
+  entryOpen: boolean;
+  entryOpensAt: Date;
+  entryClosesAt: Date;
+  ticketsIssued: number;
+  ticketsValidated: number;
+}
+
+/** Entry opens 1h before the event starts. */
+const ENTRY_OPENS_BEFORE_MS = 60 * 60 * 1000;
+/** ...and closes 7h after (≈3h of show + 4h of grace). */
+const ENTRY_CLOSES_AFTER_MS = 7 * 60 * 60 * 1000;
 
 @Injectable()
 export class GateService {
@@ -120,20 +144,67 @@ export class GateService {
     };
   }
 
+  // ─── Gate Agenda (SPEC_CP11 RF-4) ─────────────────────────────────────────
+
   /**
-   * Check if an event is in its active validation window.
-   * Active = between event start and event end + 4 hours grace period (Req 11.7).
+   * The events this gate can work on, most relevant first.
+   *
+   * Ordering is by operational urgency, not by date: whatever is open for entry
+   * right now goes to the top, because that is the only thing an operator at a
+   * door cares about. Everything else follows chronologically.
+   */
+  async listEventsForGate(): Promise<GateEventSummary[]> {
+    const events = await this.eventRepo.find({
+      where: { status: EventStatus.PUBLISHED },
+      order: { date: 'ASC' },
+    });
+
+    const summaries = await Promise.all(
+      events.map(async (event) => {
+        const [ticketsIssued, ticketsValidated] = await Promise.all([
+          this.ticketRepo.count({ where: { eventId: event.id } }),
+          this.ticketRepo.count({ where: { eventId: event.id, status: TicketStatus.USED } }),
+        ]);
+
+        const { windowStart, windowEnd } = this.entryWindow(event);
+
+        return {
+          id: event.id,
+          title: event.title,
+          venueName: event.venueName,
+          date: event.date,
+          entryOpen: this.isEventActive(event),
+          entryOpensAt: windowStart,
+          entryClosesAt: windowEnd,
+          ticketsIssued,
+          ticketsValidated,
+        };
+      }),
+    );
+
+    return summaries.sort((a, b) => {
+      if (a.entryOpen !== b.entryOpen) return a.entryOpen ? -1 : 1;
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+  }
+
+  /**
+   * Window in which a ticket for this event may be validated (Req 11.7).
+   */
+  private entryWindow(event: Event): { windowStart: Date; windowEnd: Date } {
+    const eventDate = new Date(event.date);
+    return {
+      windowStart: new Date(eventDate.getTime() - ENTRY_OPENS_BEFORE_MS),
+      windowEnd: new Date(eventDate.getTime() + ENTRY_CLOSES_AFTER_MS),
+    };
+  }
+
+  /**
+   * Check if an event is in its active validation window (Req 11.7).
    */
   private isEventActive(event: Event): boolean {
     const now = new Date();
-    const eventDate = new Date(event.date);
-
-    // 1 hour before event start is allowed
-    const windowStart = new Date(eventDate.getTime() - 60 * 60 * 1000);
-
-    // 4 hours after event end (assume event lasts ~3 hours, so +7h from start)
-    const windowEnd = new Date(eventDate.getTime() + 7 * 60 * 60 * 1000);
-
+    const { windowStart, windowEnd } = this.entryWindow(event);
     return now >= windowStart && now <= windowEnd;
   }
 

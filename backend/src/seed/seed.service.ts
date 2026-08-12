@@ -78,8 +78,40 @@ export class SeedService {
       return d;
     };
 
+    /** Minutes offset from now — for the live event (SPEC_CP11 RF-5). */
+    const minutesFromNow = (minutes: number): Date => {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() + minutes);
+      return d;
+    };
+
     // ─── Event Definitions ──────────────────────────────────────────────
     const eventDefinitions = [
+      // ── LIVE NOW (1) ──────────────────────────────────────────────────
+      // Started 30 min ago, so its entry window (-1h to +7h) is open the
+      // moment the seed runs. Without this, every other seeded event is days
+      // away and the gate can only ever answer EVENT_NOT_ACTIVE — the whole
+      // validation flow would be undemonstrable on the day of the review.
+      {
+        title: 'Sessão Cult — Cidade de Deus (ACONTECENDO AGORA)',
+        description:
+          'Sessão em cartaz neste momento, semeada para demonstrar o fluxo completo de portaria: comprar, gerar o QR, validar na entrada e receber "já utilizado" na segunda leitura.',
+        date: minutesFromNow(-30),
+        venueName: 'Cine Belas Artes',
+        venueAddress: 'R. da Consolação, 2423 - Cerqueira César, São Paulo - SP',
+        venueLat: -23.5505,
+        venueLng: -46.6333,
+        venueCity: 'São Paulo',
+        capacity: 60,
+        seatingType: SeatingType.NUMBERED,
+        seatMapConfig: {
+          sections: [{ name: 'Sala 1', rows: 6, seatsPerRow: 10 }],
+        },
+        price: 30.0,
+        currency: 'BRL',
+        status: EventStatus.PUBLISHED,
+      },
+
       // ── CONCERTS / SHOWS (3) ──────────────────────────────────────────
       {
         title: 'Anitta - Baile Funk Experience',

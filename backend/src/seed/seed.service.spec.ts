@@ -22,8 +22,8 @@ import { Seat } from '../event/entities/seat.entity';
  * to the seed, update these two numbers — the assertions below are what stops
  * the seed from silently shrinking back to a single demo event.
  */
-const SEEDED_EVENT_COUNT = 15;
-const SEEDED_SEAT_COUNT = 5955;
+const SEEDED_EVENT_COUNT = 16;
+const SEEDED_SEAT_COUNT = 6015;
 
 describe('SeedService', () => {
   let seedService: SeedService;
@@ -172,6 +172,35 @@ describe('SeedService', () => {
         // Bcrypt hash starts with $2a$ or $2b$
         expect(user.passwordHash).toMatch(/^\$2[ab]\$/);
       }
+    });
+  });
+
+  // ─── SPEC_CP11 AC-5 ────────────────────────────────────────────────────────
+
+  describe('AC-5: evento ao vivo para a portaria', () => {
+    it('semeia exatamente 1 evento com a janela de entrada aberta agora', async () => {
+      const savedEvents: Event[] = [];
+      userRepo.count.mockResolvedValue(0);
+      userRepo.create.mockImplementation((data) => ({ id: 'uuid', ...data }) as User);
+      userRepo.save.mockImplementation(async (user) => ({ id: 'uuid-1', ...user }) as User);
+      eventRepo.create.mockImplementation((data) => ({ id: 'event-1', ...data }) as Event);
+      eventRepo.save.mockImplementation(async (event) => {
+        savedEvents.push(event as Event);
+        return { id: 'event-1', ...event } as Event;
+      });
+      seatRepo.save.mockResolvedValue([] as any);
+
+      await seedService.run();
+
+      // Entry window mirrors GateService: -1h to +7h around the start time
+      const now = Date.now();
+      const openForEntry = savedEvents.filter((e) => {
+        const start = new Date(e.date).getTime();
+        return now >= start - 60 * 60 * 1000 && now <= start + 7 * 60 * 60 * 1000;
+      });
+
+      expect(openForEntry).toHaveLength(1);
+      expect(openForEntry[0].title).toMatch(/ACONTECENDO AGORA/);
     });
   });
 });
