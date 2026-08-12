@@ -21,6 +21,8 @@ export enum ReservationStatus {
   EXPIRED = 'expired',
   PAYMENT_FAILED = 'payment_failed',
   REFUNDED = 'refunded',
+  /** Client gave up at checkout — seats are released immediately (SPEC_CP10 RF-8). */
+  CANCELLED = 'cancelled',
 }
 
 @Entity('reservations')

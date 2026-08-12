@@ -8,6 +8,7 @@ import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReservationResponseDto } from './dto/reservation-response.dto';
 import { AppError, ErrorCodes, SeatUnavailableError } from '../shared/errors';
 import { ConfigService } from '@nestjs/config';
+import { ReservationGateway } from './reservation.gateway';
 
 /**
  * Reservation service with concurrency control.
@@ -33,6 +34,7 @@ export class ReservationService {
     private readonly eventRepo: Repository<Event>,
     private readonly dataSource: DataSource,
     private readonly configService: ConfigService,
+    private readonly gateway: ReservationGateway,
   ) {
     this.reservationTtlMinutes = this.configService.get<number>('reservation.ttlMinutes', 10);
   }
@@ -129,6 +131,9 @@ export class ReservationService {
 
       await queryRunner.commitTransaction();
 
+      // Everyone else watching this event sees the seats grey out immediately
+      this.gateway.broadcastSeatsReserved(dto.eventId, dto.seatIds);
+
       // Return response with seat IDs
       savedReservation.seats = lockedSeats;
       return ReservationResponseDto.fromEntity(savedReservation);
@@ -149,10 +154,75 @@ export class ReservationService {
   // ─── Get Available Seats ────────────────────────────────────────────────────
 
   async getAvailableSeats(eventId: string): Promise<Seat[]> {
+    // Return ALL seats with their status so frontend can show unavailable ones as gray
     return this.seatRepo.find({
-      where: { eventId, status: SeatStatus.AVAILABLE },
+      where: { eventId },
       order: { section: 'ASC', row: 'ASC', number: 'ASC' },
     });
+  }
+
+  // ─── Cancel a Pending Reservation (SPEC_CP10 RF-8) ────────────────────────
+
+  /**
+   * Client gave up at checkout. Release the seats immediately instead of making
+   * everyone wait for the 10-minute expiration sweep — during that window the
+   * seats look taken to every other buyer for no reason.
+   *
+   * Only the owner can cancel, and only while payment is still pending: a paid
+   * reservation is a ticket already issued and must go through refund instead.
+   */
+  async cancelReservation(userId: string, reservationId: string): Promise<{ released: number }> {
+    const reservation = await this.reservationRepo.findOne({
+      where: { id: reservationId, userId },
+      relations: ['seats'],
+    });
+
+    if (!reservation) {
+      // Anti-enumeration: someone else's reservation is simply "not found"
+      throw new AppError('Reservation not found', ErrorCodes.NOT_FOUND, 404);
+    }
+
+    // Already released by expiration or a previous cancel — idempotent success
+    if (
+      reservation.status === ReservationStatus.CANCELLED ||
+      reservation.status === ReservationStatus.EXPIRED
+    ) {
+      return { released: 0 };
+    }
+
+    if (reservation.status !== ReservationStatus.PENDING_PAYMENT) {
+      throw new AppError(
+        'Esta reserva não pode mais ser cancelada.',
+        ErrorCodes.BAD_REQUEST,
+        400,
+      );
+    }
+
+    const seatIds = reservation.seats.map((s) => s.id);
+
+    if (seatIds.length > 0) {
+      // Only flip seats still held by this reservation — never steal a sold seat
+      await this.seatRepo
+        .createQueryBuilder()
+        .update(Seat)
+        .set({ status: SeatStatus.AVAILABLE })
+        .where('id IN (:...seatIds)', { seatIds })
+        .andWhere('status = :reserved', { reserved: SeatStatus.RESERVED })
+        .execute();
+    }
+
+    reservation.status = ReservationStatus.CANCELLED;
+    await this.reservationRepo.save(reservation);
+
+    if (seatIds.length > 0) {
+      this.gateway.broadcastSeatsReleased(reservation.eventId, seatIds);
+    }
+
+    this.logger.log(
+      `Reservation ${reservationId} cancelled by owner — ${seatIds.length} seats released`,
+    );
+
+    return { released: seatIds.length };
   }
 
   // ─── Get User's Reservations ────────────────────────────────────────────────

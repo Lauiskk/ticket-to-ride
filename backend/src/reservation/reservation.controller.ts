@@ -31,6 +31,19 @@ export class ReservationController {
   }
 
   /**
+   * Give up on a pending reservation and release its seats right away
+   * (SPEC_CP10 RF-8). Idempotent: cancelling twice is not an error.
+   */
+  @Roles(UserRole.CLIENT)
+  @Post(':reservationId/cancel')
+  async cancel(
+    @CurrentUser() user: JwtPayload,
+    @Param('reservationId', ParseUUIDPipe) reservationId: string,
+  ) {
+    return this.reservationService.cancelReservation(user.sub, reservationId);
+  }
+
+  /**
    * Get current user's reservations.
    */
   @Roles(UserRole.CLIENT)
