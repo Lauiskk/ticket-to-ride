@@ -308,7 +308,19 @@ npm run start:dev       # API com hot-reload na porta 3000
 A infraestrutura já está provisionada no Railway (projeto `gallant-charisma`):
 serviços **ticket-to-ride** (API), **Postgres** e **Redis**, no ambiente `production`.
 
-**API:** https://ticket-to-ride-production-ebbe.up.railway.app
+**API:** https://ticket-to-ride-production-ebbe.up.railway.app — **no ar** ✅
+
+```
+GET /health → {"status":"healthy","dependencies":{"database":{"status":"up"},"redis":{"status":"up"}}}
+```
+
+Verificado em produção: 16 eventos semeados (6015 assentos), login dos três papéis,
+catálogo do Ticketmaster (140 eventos no Brasil), filmes em cartaz do TMDb (134) e a
+agenda da portaria com o evento ao vivo aberto para entrada.
+
+> **Falta apenas o frontend.** Depois de subir na Vercel, atualize `CORS_ORIGIN` no
+> Railway para a URL da Vercel — enquanto estiver em `http://localhost:5173`, o
+> navegador bloqueia as chamadas do site publicado.
 
 #### 1. Variáveis do backend (Railway)
 
@@ -344,6 +356,7 @@ Duas flags existem para o **primeiro** deploy num banco vazio:
 |---|---|
 | `DB_SYNCHRONIZE=true` | Cria o schema a partir das entidades. O projeto ainda não tem migrations; sem isso, o banco sobe sem nenhuma tabela. |
 | `RUN_SEED_ON_BOOT=true` | Roda o seed no startup. A imagem de produção só tem `dist/`, então `npm run seed` (ts-node sobre `src/`) não existe lá. |
+| `PORT=3000` | O Railway injeta `PORT=8080` por padrão, mas o domínio foi criado apontando para 3000. Fixar aqui evita a API subir saudável e o domínio devolver 502. |
 
 O seed é idempotente — sai na hora se já existir usuário. Depois do primeiro boot
 bem-sucedido, o recomendado é desligar `DB_SYNCHRONIZE` (ver *Limitações*).
