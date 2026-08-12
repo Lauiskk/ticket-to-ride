@@ -127,6 +127,12 @@ export class CreateEventDto {
   @Min(0)
   halfPriceQuota?: number | null;
 
+  /** Poster/banner URL, usually taken from the catalogue item. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  imageUrl?: string;
+
   // External catalog reference
   @IsOptional()
   @IsString()

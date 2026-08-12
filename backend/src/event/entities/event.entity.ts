@@ -95,6 +95,14 @@ export class Event {
   @Column({ type: 'enum', enum: EventStatus, default: EventStatus.DRAFT })
   status: EventStatus;
 
+  /**
+   * Poster/banner, normally carried over from the external catalogue.
+   * Without it the whole Ticketmaster/TMDb integration pulls an image and
+   * throws it away, leaving the storefront full of grey rectangles.
+   */
+  @Column({ name: 'image_url', type: 'varchar', length: 1000, nullable: true })
+  imageUrl: string | null;
+
   @Column({ name: 'external_id', type: 'varchar', nullable: true })
   externalId: string | null;
 

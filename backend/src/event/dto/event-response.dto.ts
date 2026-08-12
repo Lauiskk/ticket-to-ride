@@ -22,6 +22,7 @@ export class EventResponseDto {
   halfPriceEnabled: boolean;
   halfPriceQuota: number | null;
   availableSeats?: number;
+  imageUrl: string | null;
   externalId: string | null;
   externalSource: string | null;
   createdAt: Date;
@@ -44,6 +45,7 @@ export class EventResponseDto {
     dto.status = event.status;
     dto.halfPriceEnabled = event.halfPriceEnabled ?? true;
     dto.halfPriceQuota = event.halfPriceQuota ?? null;
+    dto.imageUrl = event.imageUrl ?? null;
     dto.externalId = event.externalId;
     dto.externalSource = event.externalSource;
     dto.createdAt = event.createdAt;

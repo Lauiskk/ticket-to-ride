@@ -71,6 +71,7 @@ export class EventService {
       halfPriceEnabled: dto.halfPriceEnabled ?? true,
       halfPriceQuota: dto.halfPriceQuota ?? null,
       status: EventStatus.DRAFT,
+      imageUrl: dto.imageUrl || null,
       externalId: dto.externalId || null,
       externalSource: dto.externalSource || null,
     });
