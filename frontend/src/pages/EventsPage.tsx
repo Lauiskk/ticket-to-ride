@@ -114,15 +114,22 @@ export function EventsPage() {
                   className="card-game group"
                 >
                   <Link to={`/events/${event.id}`}>
-                    <div className="h-48 overflow-hidden relative bg-board-navy/10 flex items-center justify-center">
-                      {event.externalSource ? (
+                    {/* Real artwork from Ticketmaster/TMDb when we have it.
+                        This used to be a random picsum.photos image keyed by
+                        event id — a stock photo of a beach on a stand-up show
+                        is worse than no photo at all. */}
+                    <div className="h-48 overflow-hidden relative bg-board-navy flex items-center justify-center">
+                      {event.imageUrl ? (
                         <img
-                          src={`https://picsum.photos/seed/${event.id}/400/250`}
-                          alt={event.title}
+                          src={event.imageUrl}
+                          alt=""
+                          loading="lazy"
                           className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                         />
                       ) : (
-                        <GiTicket className="text-5xl text-board-navy/20" />
+                        <div className="w-full h-full bg-gradient-to-br from-board-navy via-board-navy-light to-board-wood-dark flex items-center justify-center">
+                          <GiTicket className="text-5xl text-board-gold/30 group-hover:scale-110 transition-transform duration-500" />
+                        </div>
                       )}
                       <div className="absolute top-3 right-3 bg-board-navy/80 text-board-gold px-2 py-1 rounded text-xs font-medium">
                         {event.seatingType === 'numbered' ? 'Numerado' : 'Pista'}
@@ -138,7 +145,10 @@ export function EventsPage() {
                       </p>
                       <div className="flex items-center justify-between">
                         <span className="font-display text-xl font-bold text-board-crimson">
-                          R$ {Number(event.price).toFixed(2)}
+                          {new Intl.NumberFormat('pt-BR', {
+                            style: 'currency',
+                            currency: event.currency || 'BRL',
+                          }).format(Number(event.price))}
                         </span>
                         {event.availableSeats !== undefined && (
                           <span className="flex items-center gap-1 text-board-gold text-sm font-medium">
