@@ -1,0 +1,64 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# ─── SKELETON: Configure secrets in GitHub repo settings ─────────────────────
+# Required secrets:
+#   RAILWAY_TOKEN - Railway deploy token (for backend)
+#   VERCEL_TOKEN - Vercel deploy token (for frontend)
+#   VERCEL_ORG_ID - Vercel org ID
+#   VERCEL_PROJECT_ID - Vercel project ID
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Railway
+        # To configure:
+        # 1. Create account at https://railway.app
+        # 2. Create new project → Deploy from GitHub
+        # 3. Link this repo
+        # 4. Set environment variables in Railway dashboard
+        # 5. Get deploy token: railway tokens create
+        # 6. Add RAILWAY_TOKEN secret in GitHub repo settings
+        run: |
+          echo "Backend deploy to Railway"
+          echo "Configure RAILWAY_TOKEN secret to enable auto-deploy"
+          # Uncomment when configured:
+          # npm install -g @railway/cli
+          # railway up --service backend
+
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Build and Deploy to Vercel
+        # To configure:
+        # 1. Create account at https://vercel.com
+        # 2. Import project from GitHub (frontend folder)
+        # 3. Get tokens: vercel link, then check .vercel/project.json
+        # 4. Add secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+        run: |
+          echo "Frontend deploy to Vercel"
+          echo "Configure VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID secrets to enable"
+          # Uncomment when configured:
+          # cd frontend
+          # vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+          # vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+          # vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
