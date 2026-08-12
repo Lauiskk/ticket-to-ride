@@ -303,20 +303,125 @@ npm run seed            # Popula dados iniciais
 npm run start:dev       # API com hot-reload na porta 3000
 ```
 
-### Produção (Railway + Vercel)
+### Produção — Railway (API) + Vercel (frontend)
 
-**Backend (Railway/Render):**
-- Build: `npm run build`
-- Start: `npm run start:prod`
-- Variáveis de ambiente: conforme `.env.example`
-- Health check: `GET /health`
+A infraestrutura já está provisionada no Railway (projeto `gallant-charisma`):
+serviços **ticket-to-ride** (API), **Postgres** e **Redis**, no ambiente `production`.
 
-**Frontend (Vercel):**
-- Framework: Vite
-- Build output: `dist/`
-- Environment: `VITE_API_URL=https://sua-api.railway.app`
+**API:** https://ticket-to-ride-production-ebbe.up.railway.app
 
-**CORS:** configurado via `CORS_ORIGIN` no .env do backend.
+#### 1. Variáveis do backend (Railway)
+
+As variáveis não-secretas já estão configuradas (`NODE_ENV`, `DB_SYNCHRONIZE`,
+`RUN_SEED_ON_BOOT`, `CORS_ORIGIN`, `REDIS_URL`). Faltam **apenas os segredos**, que
+precisam ser colados por você no painel — em *Variables → Raw Editor* do serviço
+`ticket-to-ride`:
+
+```
+DATABASE_URL=postgresql://ticket:SENHA_DO_POSTGRES@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/ticket_to_ride
+JWT_SECRET=<32+ caracteres aleatórios>
+TICKET_SIGNING_SECRET=<32+ caracteres aleatórios>
+TICKETMASTER_API_KEY=<sua chave>
+TMDB_API_KEY=<sua chave>
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+> `SENHA_DO_POSTGRES` é o valor de `POSTGRES_PASSWORD` no serviço **Postgres**.
+> `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` é referência do próprio Railway — cole literalmente.
+
+Gerar segredos fortes:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+```
+
+#### 2. Primeiro boot
+
+Duas flags existem para o **primeiro** deploy num banco vazio:
+
+| Variável | O que faz |
+|---|---|
+| `DB_SYNCHRONIZE=true` | Cria o schema a partir das entidades. O projeto ainda não tem migrations; sem isso, o banco sobe sem nenhuma tabela. |
+| `RUN_SEED_ON_BOOT=true` | Roda o seed no startup. A imagem de produção só tem `dist/`, então `npm run seed` (ts-node sobre `src/`) não existe lá. |
+
+O seed é idempotente — sai na hora se já existir usuário. Depois do primeiro boot
+bem-sucedido, o recomendado é desligar `DB_SYNCHRONIZE` (ver *Limitações*).
+
+#### 3. Frontend (Vercel)
+
+O repositório já traz `frontend/vercel.json` (framework, build e o rewrite de SPA — sem
+ele, recarregar em `/events` daria 404) e `frontend/.env.production` com a URL da API.
+
+1. Vercel → **Add New → Project** → importe `Lauiskk/ticket-to-ride`
+2. **Root Directory:** `frontend`
+3. Em *Environment Variables*, adicione a chave **publicável** da Stripe:
+   `VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...`
+   (sem ela o checkout cai no modo simulado, que ainda fecha o fluxo)
+4. Deploy
+
+#### 4. Fechar o circuito
+
+Depois que a Vercel devolver a URL, atualize no Railway:
+
+```
+CORS_ORIGIN=https://<seu-projeto>.vercel.app
+```
+
+E na Stripe, aponte o webhook para
+`https://ticket-to-ride-production-ebbe.up.railway.app/payments/webhook`
+(evento `payment_intent.succeeded` e `payment_intent.payment_failed`).
+
+#### 5. CI/CD
+
+`.github/workflows/ci.yml` roda a cada push e PR: testes + build do backend, typecheck
++ build do frontend, e build da imagem Docker. `deploy.yml` só dispara **depois do CI
+verde** em `main`, e pula com aviso quando os tokens não existem — um fork não recebe
+pipeline vermelho por infraestrutura que não é dele.
+
+Para ligar o deploy automático, cadastre os secrets no repositório:
+
+```bash
+gh secret set RAILWAY_TOKEN      # railway tokens create
+gh secret set VERCEL_TOKEN       # vercel.com/account/tokens
+gh secret set VERCEL_ORG_ID      # frontend/.vercel/project.json após `vercel link`
+gh secret set VERCEL_PROJECT_ID  # idem
+```
+
+---
+
+## Limitações conhecidas
+
+> O enunciado pede que o que não funciona como esperado esteja escrito. Está aqui.
+
+### Precisa de ação manual
+
+| O quê | Por quê | Como resolver |
+|---|---|---|
+| Segredos do Railway | Foram deixados de fora de propósito — chave da Stripe e segredos de assinatura não devem trafegar por automação de terceiros | Colar no *Raw Editor* conforme a seção de Deploy |
+| Projeto na Vercel | O deploy por arquivo não permite definir variáveis de build; a integração com o GitHub dá deploy contínuo, que é melhor | Importar o repo apontando *Root Directory* para `frontend` |
+| Webhook da Stripe | A URL de produção só existe depois do deploy | Cadastrar no painel da Stripe |
+
+### Limitações técnicas assumidas
+
+| Item | Situação | O que seria o certo |
+|---|---|---|
+| `DB_SYNCHRONIZE` | Cria o schema a partir das entidades. Não há migrations. | Migrations versionadas; `synchronize` pode perder dados ao alterar uma entidade |
+| Postgres e Redis no Railway | Containers `postgres:16-alpine` e `redis:7-alpine` **sem volume** | Um redeploy zera o banco. Como `RUN_SEED_ON_BOOT` está ligado, ele se recria sozinho — mas ingressos comprados somem. Para valer: anexar volume ou usar o Postgres gerenciado |
+| Reembolso ao cancelar evento | Só registra log | Chamar `refunds.create` na Stripe para cada reserva paga |
+| Scheduler de expiração | `setInterval` de 30 s no processo | `@nestjs/schedule`; com múltiplas réplicas hoje rodaria em todas |
+| QR no banco | PNG em base64 na coluna | Guardar em bucket e salvar a URL |
+| Meia-entrada | Declaração + documento conferido na portaria | Upload de comprovante com moderação, se o rigor exigir |
+| 2FA / OTP / magic link | Só o TOTP (2FA) está implementado | OTP por SMS/WhatsApp e magic link exigem provedor de envio |
+| OAuth | Só Google | Apple exige conta paga de desenvolvedor |
+
+### Verificado e funcionando
+
+Pagamento real na Stripe (`4242…` aprova, `4000…0002` recusa) com webhook emitindo o
+ingresso · assentos atualizando ao vivo por WebSocket · portaria devolvendo válido /
+já utilizado / evento errado / fora do horário · meia-entrada com cota transacional e
+documento mascarado · catálogo trazendo 56 shows no Brasil e 135 filmes em cartaz.
+Detalhe de cada validação em `docs/plan/SPEC_CP1*.md`.
 
 ---
 
