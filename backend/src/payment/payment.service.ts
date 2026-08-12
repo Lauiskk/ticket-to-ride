@@ -9,6 +9,7 @@ import { Reservation, ReservationStatus } from '../reservation/entities/reservat
 import { Seat, SeatStatus } from '../event/entities/seat.entity';
 import { AppError, ErrorCodes } from '../shared/errors';
 import { TicketService } from '../ticket/ticket.service';
+import { ReservationGateway } from '../reservation/reservation.gateway';
 
 /**
  * Payment service — Stripe test mode integration.
@@ -35,6 +36,7 @@ export class PaymentService {
     private readonly seatRepo: Repository<Seat>,
     private readonly configService: ConfigService,
     private readonly ticketService: TicketService,
+    private readonly gateway: ReservationGateway,
   ) {
     this.stripe = new Stripe(
       this.configService.get<string>('stripe.secretKey') || '',
@@ -91,9 +93,8 @@ export class PaymentService {
       };
     }
 
-    // Detect simulated mode
-    const stripeKey = this.configService.get<string>('stripe.secretKey') || '';
-    const isSimulated = !stripeKey.startsWith('sk_test_');
+    // Detect simulated mode (no usable Stripe key configured)
+    const isSimulated = !this.hasRealStripeKey();
 
     if (isSimulated) {
       // ─── Simulated Mode: skip Stripe API entirely ───────────────────────
@@ -187,6 +188,165 @@ export class PaymentService {
   // ─── Handle Webhook Events ────────────────────────────────────────────────
 
   /**
+   * Simulated-mode confirmation: manually mark a payment as succeeded.
+   *
+   * Only available when there is NO real Stripe key configured (SPEC_CP10 RF-5).
+   * With a `sk_test_*` key the Stripe webhook is the single source of truth, so
+   * this shortcut would let a client mint tickets without ever paying.
+   */
+  async confirmTestPayment(userId: string, reservationId: string): Promise<{ success: boolean; ticketCount: number }> {
+    // Find the payment for this reservation
+    const payment = await this.paymentRepo.findOne({
+      where: { reservationId, userId },
+    });
+
+    if (!payment) {
+      throw new AppError('Payment not found', ErrorCodes.NOT_FOUND, 404);
+    }
+
+    // Idempotency: if already succeeded, return success
+    if (payment.status === PaymentStatus.SUCCEEDED) {
+      const ticketCount = await this.countTickets(reservationId);
+      return { success: true, ticketCount };
+    }
+
+    // With a real Stripe key, only the webhook may confirm a payment (RF-5)
+    if (this.hasRealStripeKey()) {
+      throw new AppError(
+        'Confirmação manual indisponível: o pagamento é confirmado pela Stripe.',
+        ErrorCodes.BAD_REQUEST,
+        400,
+      );
+    }
+
+    if (payment.status !== PaymentStatus.PENDING) {
+      throw new AppError('Payment cannot be confirmed in current state', ErrorCodes.BAD_REQUEST, 400);
+    }
+
+    // Mark payment as succeeded
+    payment.status = PaymentStatus.SUCCEEDED;
+    payment.stripeStatus = 'succeeded';
+    await this.paymentRepo.save(payment);
+
+    // Transition reservation to PAID
+    await this.reservationRepo.update(reservationId, {
+      status: ReservationStatus.PAID,
+    });
+
+    // Mark seats as SOLD
+    const reservation = await this.reservationRepo.findOne({
+      where: { id: reservationId },
+      relations: ['seats'],
+    });
+
+    if (reservation?.seats) {
+      const seatIds = reservation.seats.map((s) => s.id);
+      if (seatIds.length > 0) {
+        await this.seatRepo
+          .createQueryBuilder()
+          .update(Seat)
+          .set({ status: SeatStatus.SOLD })
+          .where('id IN (:...seatIds)', { seatIds })
+          .execute();
+      }
+    }
+
+    // Generate tickets
+    let ticketCount = 0;
+    try {
+      const tickets = await this.ticketService.generateForReservation(reservationId);
+      ticketCount = Array.isArray(tickets) ? tickets.length : 1;
+    } catch (err) {
+      this.logger.error(
+        `Test confirm — ticket generation failed for reservation ${reservationId}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+
+    this.logger.log(`Test payment confirmed — reservation ${reservationId} → paid, ${ticketCount} tickets generated`);
+    return { success: true, ticketCount };
+  }
+
+  /**
+   * How many tickets already exist for this reservation (SPEC_CP10 AC-6).
+   * Used on idempotent re-confirmation so the client gets the real number.
+   */
+  private async countTickets(reservationId: string): Promise<number> {
+    return this.ticketService.countForReservation(reservationId);
+  }
+
+  // ─── Payment Status (polling + reconciliation) ────────────────────────────
+
+  /**
+   * Status of the payment of a reservation, for the checkout modal to poll
+   * while the Stripe webhook lands (SPEC_CP10 RF-3).
+   *
+   * Also acts as a reconciliation path: if the local record is still pending but
+   * Stripe already settled the PaymentIntent, we apply the same transition the
+   * webhook would. This keeps the flow working when `stripe listen` is not
+   * running locally, without ever trusting the client about the outcome —
+   * the source of truth is always Stripe, never the browser.
+   */
+  async getPaymentStatus(
+    userId: string,
+    reservationId: string,
+  ): Promise<{ status: PaymentStatus; ticketCount: number }> {
+    const payment = await this.paymentRepo.findOne({
+      where: { reservationId, userId },
+    });
+
+    if (!payment) {
+      throw new AppError('Payment not found', ErrorCodes.NOT_FOUND, 404);
+    }
+
+    if (payment.status === PaymentStatus.PENDING && this.hasRealStripeKey()) {
+      await this.reconcileWithStripe(payment);
+    }
+
+    const refreshed = await this.paymentRepo.findOne({ where: { id: payment.id } });
+    const status = refreshed?.status ?? payment.status;
+
+    return {
+      status,
+      ticketCount: await this.countTickets(reservationId),
+    };
+  }
+
+  /**
+   * Ask Stripe for the real PaymentIntent state and apply the matching
+   * transition. Safe to call repeatedly — both handlers are idempotent.
+   */
+  private async reconcileWithStripe(payment: Payment): Promise<void> {
+    try {
+      const intent = await this.stripe.paymentIntents.retrieve(
+        payment.stripePaymentIntentId,
+      );
+
+      if (intent.status === 'succeeded') {
+        this.logger.log(
+          `Reconciled payment ${payment.id} from Stripe — intent succeeded`,
+        );
+        await this.handlePaymentSuccess(payment.stripePaymentIntentId);
+      } else if (intent.status === 'canceled') {
+        await this.handlePaymentFailure(payment.stripePaymentIntentId);
+      }
+    } catch (err) {
+      // Reconciliation is best-effort — the webhook remains the primary path
+      this.logger.warn(
+        `Stripe reconciliation failed for payment ${payment.id}: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  }
+
+  /**
+   * True when a usable Stripe key is configured — in that case the webhook is
+   * the single source of truth and the simulated shortcuts are disabled.
+   */
+  private hasRealStripeKey(): boolean {
+    const key = this.configService.get<string>('stripe.secretKey') || '';
+    return key.startsWith('sk_test_') || key.startsWith('sk_live_');
+  }
+
+  /**
    * Process a payment_intent.succeeded event.
    * Idempotent: if already processed, returns without changes (Req 8.5).
    */
@@ -231,6 +391,8 @@ export class PaymentService {
           .set({ status: SeatStatus.SOLD })
           .where('id IN (:...seatIds)', { seatIds })
           .execute();
+
+        this.gateway.broadcastSeatUpdate(reservation.eventId, seatIds, 'sold');
       }
     }
 
@@ -284,6 +446,8 @@ export class PaymentService {
           .set({ status: SeatStatus.AVAILABLE })
           .where('id IN (:...seatIds)', { seatIds })
           .execute();
+
+        this.gateway.broadcastSeatsReleased(reservation.eventId, seatIds);
       }
     }
 

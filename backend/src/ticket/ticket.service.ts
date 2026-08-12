@@ -83,6 +83,17 @@ export class TicketService {
     return ticket;
   }
 
+  // ─── Count Tickets of a Reservation ───────────────────────────────────────
+
+  /**
+   * Number of tickets already generated for a reservation.
+   * Used by the payment flow to report how many tickets a confirmation produced,
+   * including on idempotent re-confirmations (SPEC_CP10 AC-6).
+   */
+  async countForReservation(reservationId: string): Promise<number> {
+    return this.ticketRepo.count({ where: { reservationId } });
+  }
+
   // ─── Get My Tickets ─────────────────────────────────────────────────────────
 
   async getMyTickets(userId: string): Promise<Ticket[]> {
