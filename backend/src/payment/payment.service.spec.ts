@@ -90,6 +90,104 @@ describe('PaymentService (SPEC_CP10)', () => {
     );
   });
 
+  // ─── B21 ────────────────────────────────────────────────────────────────────
+
+  /**
+   * Voltar para um checkout em aberto (B21).
+   *
+   * Quando já existe um PaymentIntent para a reserva, o serviço devolvia
+   * `clientSecret: "reuse_<id>"` — uma string inventada, que não é segredo de
+   * cliente nenhum. O Stripe.js recusa na hora
+   * (`value should be a client secret of the form ${id}_secret_${secret}`).
+   *
+   * Na prática: quem reserva, fecha a aba e volta para pagar **nunca mais
+   * consegue** — e os assentos ficam presos até expirar. Achado abrindo o
+   * checkout duas vezes em produção.
+   */
+  describe('B21: reabrir o checkout devolve um segredo utilizável', () => {
+    const reservaPendente = {
+      id: 'res-1',
+      userId: 'user-1',
+      status: ReservationStatus.PENDING_PAYMENT,
+      totalAmount: 115,
+      currency: 'BRL',
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    } as Reservation;
+
+    it('devolve o client_secret real do intent que já existe', async () => {
+      reservationRepo.findOne.mockResolvedValue(reservaPendente);
+      paymentRepo.findOne.mockResolvedValue({
+        id: 'pay-1',
+        reservationId: 'res-1',
+        stripePaymentIntentId: 'pi_123',
+        status: PaymentStatus.PENDING,
+      } as Payment);
+
+      (service as any).stripe = {
+        paymentIntents: {
+          retrieve: jest.fn().mockResolvedValue({
+            id: 'pi_123',
+            client_secret: 'pi_123_secret_abc',
+          }),
+        },
+      };
+
+      const result = await service.createPaymentIntent('user-1', 'res-1');
+
+      expect(result.clientSecret).toBe('pi_123_secret_abc');
+      expect(result.clientSecret).not.toMatch(/^reuse_/);
+      // O formato que o Stripe.js exige
+      expect(result.clientSecret).toMatch(/_secret_/);
+    });
+
+    it('não cria um segundo intent para a mesma reserva', async () => {
+      reservationRepo.findOne.mockResolvedValue(reservaPendente);
+      paymentRepo.findOne.mockResolvedValue({
+        id: 'pay-1',
+        reservationId: 'res-1',
+        stripePaymentIntentId: 'pi_123',
+        status: PaymentStatus.PENDING,
+      } as Payment);
+
+      const create = jest.fn();
+      (service as any).stripe = {
+        paymentIntents: {
+          retrieve: jest.fn().mockResolvedValue({ client_secret: 'pi_123_secret_abc' }),
+          create,
+        },
+      };
+
+      const result = await service.createPaymentIntent('user-1', 'res-1');
+
+      expect(create).not.toHaveBeenCalled();
+      expect(result.paymentId).toBe('pay-1');
+    });
+
+    it('se a Stripe não souber do intent, um novo é criado em vez de travar a compra', async () => {
+      reservationRepo.findOne.mockResolvedValue(reservaPendente);
+      paymentRepo.findOne.mockResolvedValue({
+        id: 'pay-1',
+        reservationId: 'res-1',
+        stripePaymentIntentId: 'pi_sumido',
+        status: PaymentStatus.PENDING,
+      } as Payment);
+
+      (service as any).stripe = {
+        paymentIntents: {
+          retrieve: jest.fn().mockRejectedValue(new Error('No such payment_intent')),
+          create: jest.fn().mockResolvedValue({
+            id: 'pi_novo',
+            client_secret: 'pi_novo_secret_xyz',
+          }),
+        },
+      };
+
+      const result = await service.createPaymentIntent('user-1', 'res-1');
+
+      expect(result.clientSecret).toBe('pi_novo_secret_xyz');
+    });
+  });
+
   // ─── AC-3 ───────────────────────────────────────────────────────────────────
 
   describe('AC-3: webhook de sucesso é a fonte de verdade', () => {

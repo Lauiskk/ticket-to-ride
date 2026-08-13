@@ -81,16 +81,42 @@ export class PaymentService {
       );
     }
 
-    // Check if payment already exists for this reservation (idempotent)
+    /*
+      Já existe uma cobrança em aberto para esta reserva (B21).
+
+      Aqui devolvíamos `clientSecret: "reuse_<id>"` — uma string inventada, que
+      não é segredo de cliente nenhum. O Stripe.js recusa de imediato, e o
+      resultado prático é cruel: quem reserva, fecha a aba e volta para pagar
+      **nunca mais consegue**, com os assentos presos até expirar. Achado
+      abrindo o checkout duas vezes na aplicação publicada.
+
+      O certo é buscar o intent na Stripe e devolver o `client_secret` de
+      verdade — o mesmo intent, sem cobrar duas vezes.
+    */
     const existing = await this.paymentRepo.findOne({
       where: { reservationId },
     });
     if (existing && existing.status === PaymentStatus.PENDING) {
-      // Return existing payment intent
-      return {
-        clientSecret: `reuse_${existing.stripePaymentIntentId}`,
-        paymentId: existing.id,
-      };
+      if (this.hasRealStripeKey() && existing.stripePaymentIntentId?.startsWith('pi_')) {
+        try {
+          const intent = await this.stripe.paymentIntents.retrieve(
+            existing.stripePaymentIntentId,
+          );
+          return { clientSecret: intent.client_secret, paymentId: existing.id };
+        } catch (error) {
+          // Intent sumiu do lado da Stripe (chave trocada, ambiente limpo).
+          // Seguir adiante e criar outro é melhor do que travar a compra.
+          this.logger.warn(
+            `PaymentIntent ${existing.stripePaymentIntentId} não encontrado na Stripe; criando outro para a reserva ${reservationId}`,
+          );
+        }
+      } else {
+        // Modo simulado: não há Stripe do outro lado para consultar
+        return {
+          clientSecret: `simulated_${existing.stripePaymentIntentId}`,
+          paymentId: existing.id,
+        };
+      }
     }
 
     // Detect simulated mode (no usable Stripe key configured)
