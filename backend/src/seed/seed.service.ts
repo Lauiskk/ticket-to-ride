@@ -112,8 +112,6 @@ export class SeedService implements OnApplicationBootstrap {
     }
 
     const definitions: EventDefinition[] = [];
-
-    // ── Shows: seated venues, priced like arena tickets ──────────────────
     showItems.slice(0, 8).forEach((item, i) => {
       const apiDate = item.date ? new Date(item.date) : null;
       const isUsableDate = apiDate && !Number.isNaN(apiDate.getTime()) && apiDate > new Date();
@@ -143,9 +141,8 @@ export class SeedService implements OnApplicationBootstrap {
         externalSource: item.source,
       });
     });
-
-    // ── Movies: cinema sessions. The API date is the theatrical release,
-    //    never the session — the organizer schedules that. ────────────────
+    // A data que a API do filme devolve é a estreia nos cinemas, não a sessão:
+    // quem marca a sessão é o organizador.
     movieItems.slice(0, 6).forEach((item, i) => {
       const rows = 6;
       const seatsPerRow = 10 + (i % 3);
@@ -193,8 +190,6 @@ export class SeedService implements OnApplicationBootstrap {
     }
 
     this.logger.log('Seeding database...');
-
-    // ─── Create Users ───────────────────────────────────────────────────
     const organizer = await this.createUser(
       'organizer@ticket.dev',
       'Organizer123!',
@@ -224,8 +219,6 @@ export class SeedService implements OnApplicationBootstrap {
     );
 
     this.logger.log('4 users created.');
-
-    // ─── Helper: date offset from now ───────────────────────────────────
     const daysFromNow = (days: number): Date => {
       const d = new Date();
       d.setDate(d.getDate() + days);
@@ -238,12 +231,9 @@ export class SeedService implements OnApplicationBootstrap {
       d.setMinutes(d.getMinutes() + minutes);
       return d;
     };
-
-    // ─── Static fallback ────────────────────────────────────────────────
     // Used when the external catalogue is unreachable, so a machine offline (or
     // with the daily Ticketmaster quota burned) still gets a usable seed.
     const fallbackDefinitions: EventDefinition[] = [
-      // ── LIVE NOW (1) ──────────────────────────────────────────────────
       // Started 30 min ago, so its entry window (-1h to +7h) is open the
       // moment the seed runs. Without this, every other seeded event is days
       // away and the gate can only ever answer EVENT_NOT_ACTIVE — the whole
@@ -267,8 +257,6 @@ export class SeedService implements OnApplicationBootstrap {
         currency: 'BRL',
         status: EventStatus.PUBLISHED,
       },
-
-      // ── CONCERTS / SHOWS (3) ──────────────────────────────────────────
       {
         title: 'Anitta - Baile Funk Experience',
         description:
@@ -329,8 +317,6 @@ export class SeedService implements OnApplicationBootstrap {
         currency: 'BRL',
         status: EventStatus.PUBLISHED,
       },
-
-      // ── CINEMA / MOVIE SESSIONS (3) ───────────────────────────────────
       {
         title: 'Pré-Estreia: O Último Samurai Brasileiro',
         description:
@@ -392,8 +378,6 @@ export class SeedService implements OnApplicationBootstrap {
         currency: 'BRL',
         status: EventStatus.PUBLISHED,
       },
-
-      // ── THEATER / COMEDY (3) ──────────────────────────────────────────
       {
         title: 'Fábio Porchat - Stand-Up Inédito',
         description:
@@ -457,8 +441,6 @@ export class SeedService implements OnApplicationBootstrap {
         currency: 'BRL',
         status: EventStatus.PUBLISHED,
       },
-
-      // ── FESTIVALS (3) ─────────────────────────────────────────────────
       {
         title: 'Lollapalooza Brasil 2025 - Day 1',
         description:
@@ -516,8 +498,6 @@ export class SeedService implements OnApplicationBootstrap {
         currency: 'BRL',
         status: EventStatus.PUBLISHED,
       },
-
-      // ── OTHER EVENTS (3) ──────────────────────────────────────────────
       {
         title: 'Orquestra Sinfônica de SP - Beethoven',
         description:
@@ -586,8 +566,6 @@ export class SeedService implements OnApplicationBootstrap {
         status: EventStatus.PUBLISHED,
       },
     ];
-
-    // ─── Decide where the catalogue comes from ──────────────────────────
     //
     // The live event is always static: it has to start 30 min ago for the gate
     // flow to be demonstrable, and no external API will hand us that.
@@ -604,8 +582,6 @@ export class SeedService implements OnApplicationBootstrap {
         ? `Semeando com ${catalogDefinitions.length} eventos do catálogo externo + 1 ao vivo.`
         : `Semeando com a lista estática (${fallbackDefinitions.length} eventos).`,
     );
-
-    // ─── Create Events & Seats ──────────────────────────────────────────
     let totalSeatsCreated = 0;
 
     for (const def of eventDefinitions) {
@@ -618,8 +594,6 @@ export class SeedService implements OnApplicationBootstrap {
 
       const savedEvent = await this.eventRepo.save(event);
       this.logger.log(`Event "${savedEvent.title}" created.`);
-
-      // ─── Create Seats ───────────────────────────────────────────────
       const seats: Partial<Seat>[] = [];
 
       if (def.seatingType === SeatingType.NUMBERED && def.seatMapConfig.sections) {

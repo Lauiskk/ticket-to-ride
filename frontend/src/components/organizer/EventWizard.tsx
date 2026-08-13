@@ -111,8 +111,6 @@ export function EventWizard({ onCreated, onClose }: Props) {
   /** 40% is the figure in Lei 12.933/2013 — offered as the default, not forced. */
   const suggestedQuota = Math.floor(capacity * 0.4);
 
-  // ─── Validation ───────────────────────────────────────────────────────────
-
   /**
    * One field, one rule (SPEC_CP18 RF-4). Keeping the rules in a single place
    * means the message you get when you leave a field and the message you get
@@ -230,8 +228,6 @@ export function EventWizard({ onCreated, onClose }: Props) {
     setStep(target);
   };
 
-  // ─── Catalogue ────────────────────────────────────────────────────────────
-
   const search = async (nextTab: CatalogTab = tab) => {
     // "Em cartaz" needs no query — that is the whole point of the tab
     if (nextTab === 'shows' && !query.trim() && !catalogCity && !classification) return;
@@ -296,8 +292,6 @@ export function EventWizard({ onCreated, onClose }: Props) {
     setStep(1);
   };
 
-  // ─── Submit ───────────────────────────────────────────────────────────────
-
   const submit = async () => {
     if (!validateStep(2)) return;
     setSubmitting(true);
@@ -329,8 +323,6 @@ export function EventWizard({ onCreated, onClose }: Props) {
       setSubmitting(false);
     }
   };
-
-  // ─── Field helpers ────────────────────────────────────────────────────────
 
   const field = (name: string) =>
     `w-full px-4 py-3 rounded-lg bg-white border transition-colors focus:outline-none focus:ring-2 ${
@@ -414,7 +406,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
         </div>
 
         <div className="px-6 py-6">
-          {/* ─── Step 0: catalogue ─────────────────────────────────────── */}
+          {/* Step 0: catalogue */}
           {step === 0 && (
             <div>
               {/* Two sources, two questions */}
@@ -555,7 +547,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
             </div>
           )}
 
-          {/* ─── Step 1: details ───────────────────────────────────────── */}
+          {/* Step 1: details */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
@@ -643,7 +635,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
             </div>
           )}
 
-          {/* ─── Step 2: seating & price ───────────────────────────────── */}
+          {/* Step 2: seating & price */}
           {step === 2 && (
             <div className="space-y-6">
               <div>
@@ -882,7 +874,7 @@ export function EventWizard({ onCreated, onClose }: Props) {
             </div>
           )}
 
-          {/* ─── Step 3: review ────────────────────────────────────────── */}
+          {/* Step 3: review */}
           {step === 3 && (
             <div>
               <p className="text-board-navy/60 text-sm mb-4">

@@ -10,14 +10,8 @@ import { AppError, ErrorCodes } from '../shared/errors';
 import { TicketResponseDto } from './dto/ticket-response.dto';
 
 /**
- * Ticket service — generation, retrieval, owner-only access.
- *
- * Key behaviors:
- * - Generate ticket after payment success (Req 9.1)
- * - HMAC-SHA256 signing (Req 9.2)
- * - QR code with no PII (Req 9.4)
- * - Retry 3x with exponential backoff on failure (Req 9.5)
- * - Owner-only access (Req 9.6)
+ * Emissão e leitura de ingressos. O QR leva assinatura HMAC e nenhum dado
+ * pessoal: quem lê o código na fila não descobre quem é o dono.
  */
 @Injectable()
 export class TicketService {
@@ -32,13 +26,7 @@ export class TicketService {
     private readonly qrGenerator: QrGeneratorService,
   ) {}
 
-  // ─── Generate Tickets for Paid Reservation ────────────────────────────────
-
-  /**
-   * Generate tickets for all seats in a paid reservation.
-   * Called after payment confirmation.
-   * Retries up to 3 times with exponential backoff (1s, 2s, 4s) — Req 9.5.
-   */
+  /** Emite os ingressos de uma reserva paga. Até 3 tentativas (1s, 2s, 4s). */
   async generateForReservation(reservationId: string): Promise<Ticket[]> {
     const reservation = await this.reservationRepo.findOne({
       where: { id: reservationId },
@@ -53,7 +41,7 @@ export class TicketService {
     const claims = reservation.halfPriceClaims ?? {};
 
     for (const seat of reservation.seats) {
-      // Half-price is decided per seat at checkout (SPEC_CP12 RF-12)
+      // A meia-entrada é decidida por assento, no checkout
       const claim = claims[seat.id];
 
       const ticket = await this.generateWithRetry(
@@ -69,11 +57,6 @@ export class TicketService {
     return tickets;
   }
 
-  // ─── Get Ticket (Owner-Only) ──────────────────────────────────────────────
-
-  /**
-   * Get a ticket by ID — only if the requesting user is the owner (Req 9.6).
-   */
   async getTicket(ticketId: string, userId: string): Promise<TicketResponseDto> {
     const ticket = await this.ticketRepo.findOne({
       where: { id: ticketId },
@@ -92,8 +75,6 @@ export class TicketService {
     return TicketResponseDto.fromEntity(ticket);
   }
 
-  // ─── Count Tickets of a Reservation ───────────────────────────────────────
-
   /**
    * Number of tickets already generated for a reservation.
    * Used by the payment flow to report how many tickets a confirmation produced,
@@ -102,8 +83,6 @@ export class TicketService {
   async countForReservation(reservationId: string): Promise<number> {
     return this.ticketRepo.count({ where: { reservationId } });
   }
-
-  // ─── Get My Tickets ─────────────────────────────────────────────────────────
 
   async getMyTickets(userId: string): Promise<TicketResponseDto[]> {
     // The event comes along so the list can lead with the show's name instead
@@ -116,8 +95,6 @@ export class TicketService {
 
     return tickets.map((t) => TicketResponseDto.fromEntity(t));
   }
-
-  // ─── Private: Generate Single Ticket with Retry ───────────────────────────
 
   private async generateWithRetry(
     eventId: string,

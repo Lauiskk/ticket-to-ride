@@ -19,8 +19,6 @@ import { ArgumentsHost } from '@nestjs/common';
  * - P4: (tested in response.interceptor.spec.ts)
  */
 
-// ─── Test Helpers ─────────────────────────────────────────────────────────────
-
 function createMockHost(): { host: ArgumentsHost; getResponseBody: () => unknown; getStatus: () => number } {
   let responseBody: unknown = null;
   let statusCode = 0;
@@ -70,8 +68,6 @@ const validationErrorArb: fc.Arbitrary<ValidationErrorDetail> = fc.record({
   expected: fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
   received: fc.option(fc.string({ maxLength: 50 }), { nil: undefined }),
 });
-
-// ─── Property 1: Error Serialization Structure ────────────────────────────────
 
 describe('GlobalExceptionFilter', () => {
   const filter = new GlobalExceptionFilter();
@@ -150,8 +146,6 @@ describe('GlobalExceptionFilter', () => {
     });
   });
 
-  // ─── Property 2: Unhandled Exception Normalization ────────────────────────
-
   describe('Property 2: Unhandled Exception Normalization', () => {
     it('unknown exceptions return 500 INTERNAL_ERROR with no stack trace', () => {
       fc.assert(
@@ -216,8 +210,6 @@ describe('GlobalExceptionFilter', () => {
     });
   });
 
-  // ─── Property 3: Unique Constraint Mapping ────────────────────────────────
-
   describe('Property 3: Unique Constraint Mapping', () => {
     it('PG code 23505 returns 409 ALREADY_EXISTS with field name from constraint', () => {
       fc.assert(
@@ -255,8 +247,6 @@ describe('GlobalExceptionFilter', () => {
     });
   });
 });
-
-// ─── QueryFailedError mock prototype ──────────────────────────────────────────
 // We need the filter's instanceof check to pass
 
 import { QueryFailedError } from 'typeorm';

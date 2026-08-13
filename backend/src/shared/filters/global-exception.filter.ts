@@ -10,16 +10,8 @@ import { QueryFailedError } from 'typeorm';
 import { AppError, ErrorCodes, type ValidationErrorDetail } from '../errors';
 
 /**
- * Global exception filter that catches ALL unhandled exceptions
- * and returns a standardized error response.
- *
- * Replicates the Go project's ErrorHandler + ResponseHandler pattern:
- * - AppError → {message, code, statusCode, errors?}
- * - HttpException → mapped to standardized format
- * - QueryFailedError (PG 23505) → 409 ALREADY_EXISTS
- * - Unknown → 500 INTERNAL_ERROR (no stack trace in response)
- *
- * CRITICAL (Req 16.5): Error responses NEVER include pagination metadata.
+ * Traduz qualquer exceção para o mesmo formato de erro. Stack nunca sai na
+ * resposta, e resposta de erro nunca carrega metadados de paginação.
  */
 
 interface ErrorResponse {
@@ -29,7 +21,7 @@ interface ErrorResponse {
   errors?: ValidationErrorDetail[];
 }
 
-// PostgreSQL error code for unique constraint violation
+/** Violação de unicidade no Postgres. */
 const PG_UNIQUE_VIOLATION = '23505';
 
 @Catch()
@@ -50,29 +42,22 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     exception: unknown,
     request: Request,
   ): ErrorResponse {
-    // 1. AppError — our custom domain errors
     if (exception instanceof AppError) {
       return this.handleAppError(exception);
     }
 
-    // 2. TypeORM QueryFailedError — database constraint violations
     if (exception instanceof QueryFailedError) {
       return this.handleQueryFailedError(exception);
     }
 
-    // 3. NestJS HttpException — framework-level errors (404, validation, etc.)
     if (exception instanceof HttpException) {
       return this.handleHttpException(exception);
     }
 
-    // 4. Unknown — unexpected errors (NEVER expose stack trace)
+    // Desconhecido: loga a stack, nunca devolve
     return this.handleUnknownError(exception, request);
   }
 
-  /**
-   * Handles our custom AppError instances.
-   * These already have the correct structure — just serialize them.
-   */
   private handleAppError(error: AppError): ErrorResponse {
     const response: ErrorResponse = {
       message: error.message,
@@ -87,11 +72,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     return response;
   }
 
-  /**
-   * Handles TypeORM database errors.
-   * Detects unique constraint violations (PG code 23505) and maps them
-   * to 409 ALREADY_EXISTS with the conflicting field name.
-   */
+  /** Violação de unicidade vira 409 com o nome do campo em conflito. */
   private handleQueryFailedError(error: QueryFailedError): ErrorResponse {
     const driverError = error.driverError as unknown as Record<string, unknown>;
 
@@ -106,7 +87,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       };
     }
 
-    // Other DB errors — log and return generic 500
     this.logger.error(
       `Database error: ${error.message}`,
       error.stack,
@@ -119,19 +99,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     };
   }
 
-  /**
-   * Handles NestJS HttpException instances (from guards, pipes, framework).
-   * Maps them to our standardized format.
-   */
   private handleHttpException(exception: HttpException): ErrorResponse {
     const status = exception.getStatus();
     const exceptionResponse = exception.getResponse();
 
-    // class-validator returns {message: string[], error: string, statusCode: number}
     if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
       const resp = exceptionResponse as Record<string, unknown>;
 
-      // Validation pipe errors (class-validator)
       if (Array.isArray(resp.message) && status === 400) {
         const errors: ValidationErrorDetail[] = (
           resp.message as string[]
@@ -149,7 +123,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         };
       }
 
-      // Other structured responses from NestJS
       return {
         message:
           typeof resp.message === 'string'
@@ -160,7 +133,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       };
     }
 
-    // String response
     return {
       message:
         typeof exceptionResponse === 'string'
@@ -171,10 +143,6 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     };
   }
 
-  /**
-   * Handles completely unknown/unexpected errors.
-   * Logs the full stack trace internally but NEVER exposes it in the response.
-   */
   private handleUnknownError(
     exception: unknown,
     request: Request,
@@ -205,42 +173,27 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     };
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
-
-  /**
-   * Extracts the field name from a PostgreSQL unique constraint violation.
-   * Constraint names typically follow: uni_tablename_fieldname or idx_tablename_fieldname
-   */
+  /** `uni_users_email` → `email`. */
   private extractConstraintField(
     driverError: Record<string, unknown>,
   ): string | null {
     const constraint = driverError.constraint as string | undefined;
     if (!constraint) return null;
 
-    // Try to extract field from constraint name patterns:
-    // uni_users_email → email
-    // idx_tickets_ticket_code → ticket_code
     const parts = constraint.split('_');
     if (parts.length >= 3) {
-      // Skip prefix (uni/idx/uq) and table name, take the rest
       return parts.slice(2).join('_');
     }
 
     return constraint;
   }
 
-  /**
-   * Extracts field name from class-validator error messages.
-   * Messages often start with the field name (e.g., "email must be an email").
-   */
+  /** A mensagem do class-validator começa pelo campo: "email must be an email". */
   private extractFieldFromMessage(message: string): string {
     const firstWord = message.split(' ')[0];
     return firstWord || 'unknown';
   }
 
-  /**
-   * Maps HTTP status codes to our ErrorCodes constants.
-   */
   private httpStatusToCode(status: number): string {
     switch (status) {
       case 400:

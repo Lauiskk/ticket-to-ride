@@ -56,8 +56,6 @@ export class TmdbClient {
     return this.fetchMovies(url, page);
   }
 
-  // ─── Internals ────────────────────────────────────────────────────────────
-
   private async fetchMovies(url: URL, page: number): Promise<CatalogSearchResult> {
     if (!this.apiKey) {
       return { items: [], total: 0, page, pageSize: 20 };

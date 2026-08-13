@@ -7,15 +7,12 @@ function readCookie(name: string): string | null {
 }
 
 /**
- * Absolute URL for an API path, for links the BROWSER navigates to.
+ * URL absoluta, para links que o NAVEGADOR segue (OAuth e afins).
  *
- * `fetch` is happy with the relative `/api` default because the dev server
- * proxies it. A full-page redirect is not: in production `/api/auth/google`
- * resolves against the frontend's own domain, the SPA rewrite answers with
- * `index.html`, and the user lands on a blank page instead of Google. That is
- * exactly how the OAuth button broke.
- *
- * Use this for OAuth entry points and any other `href` that leaves the SPA.
+ * O `fetch` se contenta com `/api` porque o dev server faz proxy. Um redirect
+ * de página inteira, não: em produção `/api/auth/google` resolve contra o
+ * domínio do site, o rewrite de SPA devolve `index.html`, e a pessoa cai numa
+ * página em branco em vez do Google. Foi assim que o botão quebrou.
  */
 export function apiUrl(path: string): string {
   const base = BASE_URL.startsWith('http')
@@ -29,12 +26,9 @@ class ApiClient {
   private baseUrl: string;
   private refreshing: Promise<boolean> | null = null;
   /**
-   * Token de CSRF em memória (SPEC_CP20 B20).
-   *
-   * Ele também vem num cookie, mas esse cookie é do domínio da **API**. Em
-   * produção o site está em outro domínio, e `document.cookie` de um domínio
-   * não enxerga cookie do outro — o navegador manda, o JavaScript não lê. Por
-   * isso o valor chega junto da resposta de autenticação e mora aqui.
+   * Token de CSRF em memória (B20). O cookie equivalente é do domínio da API, e
+   * `document.cookie` de um domínio não enxerga cookie do outro — o navegador
+   * manda, o JavaScript não lê. Por isso o valor vem no corpo da resposta.
    */
   private csrfToken: string | null = null;
 
@@ -52,16 +46,10 @@ class ApiClient {
   }
 
   /**
-   * A sessão não passa mais por aqui (SPEC_CP20 RF-3).
-   *
-   * O token vivia no `localStorage` e ia como `Authorization: Bearer` — o que
-   * significa que qualquer script rodando na página conseguia lê-lo e levá-lo
-   * embora. Agora ele está num cookie `httpOnly` que o navegador anexa sozinho
-   * (via `credentials: 'include'`) e que JavaScript nenhum consegue ler.
-   *
-   * O que este método monta é a outra metade: o token de CSRF, que é legível de
-   * propósito. Ele não é segredo — a defesa está em um site de outra origem não
-   * conseguir lê-lo para copiar aqui.
+   * A sessão não passa por aqui: vive num cookie `httpOnly` que o navegador
+   * anexa sozinho. O que este método monta é a outra metade da dupla submissão,
+   * o token de CSRF — legível de propósito, porque a defesa não está no segredo
+   * dele, e sim em outra origem não conseguir lê-lo para copiar aqui.
    */
   private getHeaders(method: string): Record<string, string> {
     const headers: Record<string, string> = {
@@ -69,8 +57,7 @@ class ApiClient {
     };
 
     if (method !== 'GET' && method !== 'HEAD') {
-      // Memória primeiro (funciona entre domínios); o cookie é o caminho de
-      // desenvolvimento, onde o Vite faz proxy e tudo é mesma origem.
+      // Memória primeiro (funciona entre domínios); o cookie serve o dev
       const csrf = this.csrfToken ?? readCookie('csrf_token');
       if (csrf) headers['X-CSRF-Token'] = csrf;
     }
@@ -79,12 +66,9 @@ class ApiClient {
   }
 
   /**
-   * `options.allowAnonymous`: 401 é resposta legítima, não sessão perdida.
-   *
-   * Só `/auth/me` usa. Sem isso, um visitante abrindo a vitrine recebia 401 na
-   * verificação de sessão, o cliente tentava renovar, falhava, e o "tratamento"
-   * era mandá-lo para a tela de login — expulsando da loja pública justamente
-   * quem ainda não tem conta.
+   * `allowAnonymous`: 401 é resposta legítima, não sessão perdida. Só `/auth/me`
+   * usa. Sem isso, o visitante sem conta era expulso da vitrine pública para o
+   * login (B19).
    */
   async get<T = unknown>(
     path: string,
@@ -118,11 +102,9 @@ class ApiClient {
       throw await this.handleError(res);
     }
 
-    // Handle 401 — attempt token refresh
     if (res.status === 401) {
       const refreshed = await this.attemptRefresh();
       if (refreshed) {
-        // Retry original request with new token
         const retryRes = await fetch(`${this.baseUrl}${path}`, {
           method,
           headers: this.getHeaders(method),
@@ -132,7 +114,6 @@ class ApiClient {
         if (!retryRes.ok) throw await this.handleError(retryRes);
         return { data: await this.parseJson<T>(retryRes) };
       } else {
-        // Refresh failed — clear session and redirect
         this.clearSession();
         throw await this.handleError(res);
       }
@@ -143,13 +124,10 @@ class ApiClient {
   }
 
   /**
-   * Parse a JSON response, and say something useful when it isn't JSON.
-   *
-   * This caught a real production outage: `VITE_API_URL` was set to `teste`, so
-   * every call resolved to `/teste/...` on the frontend's own domain. The SPA
-   * rewrite answered with `index.html` — HTTP 200, `text/html` — and the only
-   * symptom the user saw was "Unexpected token '<'". An API base URL pointing
-   * at the app itself is a configuration mistake, and the error should say so.
+   * Diz algo útil quando a resposta não é JSON. `VITE_API_URL` ficou valendo
+   * `teste` num deploy: toda chamada virou `/teste/...` no próprio domínio do
+   * site, o rewrite de SPA respondeu `index.html` com HTTP 200, e o único
+   * sintoma era "Unexpected token '<'".
    */
   private async parseJson<T>(res: Response): Promise<T> {
     const contentType = res.headers.get('content-type') || '';
@@ -169,9 +147,7 @@ class ApiClient {
     return res.json() as Promise<T>;
   }
 
-  /**
-   * Attempt token refresh. Deduplicates concurrent refresh calls.
-   */
+  /** Renova a sessão. Chamadas concorrentes compartilham a mesma tentativa. */
   private async attemptRefresh(): Promise<boolean> {
     if (this.refreshing) return this.refreshing;
 
@@ -184,8 +160,7 @@ class ApiClient {
         });
         if (!res.ok) return false;
 
-        // A sessão renovada traz um par de CSRF novo — sem atualizá-lo aqui, a
-        // primeira mutação depois da renovação levaria o token velho.
+        // Par de CSRF novo: sem isto, a primeira mutação levaria o token velho
         const data = await res.json().catch(() => null);
         this.setCsrfToken(data?.csrfToken);
         return true;
@@ -200,8 +175,8 @@ class ApiClient {
   }
 
   private clearSession() {
-    // Nada a apagar no navegador: os cookies são do servidor e ele os limpa no
-    // logout. Aqui só resta tirar a pessoa de uma tela que ela não pode mais ver.
+    // Não há nada a apagar aqui: os cookies são do servidor. Só resta tirar a
+    // pessoa de uma tela que ela não pode mais ver.
     if (!window.location.pathname.includes('/login')) {
       window.location.href = '/login';
     }

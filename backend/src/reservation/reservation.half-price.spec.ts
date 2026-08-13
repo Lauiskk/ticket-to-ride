@@ -90,8 +90,6 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
       halfPriceClaims: claims,
     });
 
-  // ─── AC-1 / AC-2 ────────────────────────────────────────────────────────────
-
   it('AC-1: 1 inteira + 1 meia num evento de R$100 totaliza R$150', async () => {
     await reserve([
       { seatId: SEAT_A, category: HalfPriceCategory.STUDENT, document: '2024001234' },
@@ -131,8 +129,6 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
     });
   });
 
-  // ─── AC-3 ───────────────────────────────────────────────────────────────────
-
   it('AC-3: estourar a cota recusa a reserva inteira', async () => {
     eventOverrides = { halfPriceQuota: 2 };
     halfPriceTaken = 2; // cota já esgotada por reservas ativas
@@ -155,8 +151,6 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
     expect(Number(savedReservation.totalAmount)).toBe(150);
   });
 
-  // ─── AC-4 ───────────────────────────────────────────────────────────────────
-
   it('AC-4: evento com meia desabilitada recusa a declaração', async () => {
     eventOverrides = { halfPriceEnabled: false };
 
@@ -166,8 +160,6 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
 
     expect(savedReservation).toBeNull();
   });
-
-  // ─── AC-E1 ──────────────────────────────────────────────────────────────────
 
   it('AC-E1: declaração para assento fora da reserva é recusada', async () => {
     await expect(
@@ -182,8 +174,6 @@ describe('ReservationService — meia-entrada (SPEC_CP12)', () => {
 
     expect(savedReservation).toBeNull();
   });
-
-  // ─── SPEC_CP15 B12 ──────────────────────────────────────────────────────────
 
   describe('B12: falha de infraestrutura não vira "assento ocupado"', () => {
     /** Faz o findOne do evento estourar com o erro dado. */

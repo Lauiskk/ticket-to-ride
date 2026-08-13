@@ -20,24 +20,14 @@ interface AuthContextType {
     name: string;
     role: string;
   }) => Promise<User>;
-  /**
-   * Relê a sessão do servidor e devolve quem é. Usado pelo retorno do Google,
-   * que cria a sessão fora do formulário — o SPA só sabe que ela existe
-   * perguntando.
-   */
+  /** Relê a sessão no servidor. O retorno do Google depende disto. */
   refreshSession: () => Promise<User | null>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-/**
- * Piso entre duas reconferências de sessão (SPEC_CP24 RF-6).
- *
- * Alternar de aba é gesto barato e repetido; sem piso, uma pessoa passando por
- * três abas dispara três `/auth/me` em um segundo — e o limitador do CP21 está
- * ali justamente para não deixar isso escalar.
- */
+/** Piso entre reconferências: alternar de aba não pode virar rajada. */
 const SESSION_RECHECK_INTERVAL_MS = 15_000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -49,24 +39,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const knownUserId = useRef<string | null>(null);
 
   /**
-   * Contador de decisões de sessão, para a resposta atrasada não passar na
-   * frente da recente.
-   *
-   * A reconferência por foco criou uma corrida que não existia: ela dispara um
-   * `/auth/me` que pode estar voando quando a pessoa entra pelo formulário. Se
-   * essa consulta saiu **antes** do cookie existir, ela volta 401 **depois** do
-   * login — e desfaz o login que acabou de dar certo. Seria o B18 de novo, agora
-   * por outro caminho: entrar e a tela não reagir.
+   * Impede a resposta atrasada de passar na frente da recente: um `/auth/me`
+   * disparado antes do cookie existir volta 401 depois do login e desfaria o
+   * login que acabou de dar certo.
    */
   const sessionEpoch = useRef(0);
 
   /**
-   * Adota a identidade que o servidor acabou de informar (SPEC_CP24 RF-5).
-   *
-   * Se ela mudou, o cache de consultas inteiro vai embora. Ele foi preenchido
-   * respondendo "quais são os *meus* ingressos", "quais são os *meus* eventos" —
-   * perguntas cuja resposta depende de quem perguntou. Mantê-lo depois da troca
-   * é exibir dado de uma conta na tela de outra.
+   * Adota a identidade que o servidor informou. Se ela mudou, o cache inteiro
+   * vai embora: ele responde "quais são os MEUS ingressos", pergunta cuja
+   * resposta depende de quem perguntou.
    */
   const applySession = useCallback(
     (next: User | null) => {
@@ -83,13 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Quem está logado, segundo o servidor (SPEC_CP20 RF-3).
-   *
-   * A sessão mora num cookie `httpOnly`: o JavaScript não consegue lê-la nem
-   * para saber de quem é. Então o SPA pergunta. Além de necessário, é mais
-   * honesto do que antes — o papel que monta a interface passa a vir de um JWT
-   * verificado no servidor, e não de um JSON no `localStorage` que qualquer um
-   * podia editar para virar "organizer" na própria tela.
+   * Quem está logado, segundo o servidor. A sessão mora num cookie `httpOnly`,
+   * que o JavaScript não lê nem para saber de quem é — então pergunta. O papel
+   * que monta a interface passa a vir de um JWT verificado, não de um JSON que
+   * qualquer um podia editar para virar "organizer" na própria tela.
    */
   const refreshSession = useCallback(async (): Promise<User | null> => {
     const epoch = sessionEpoch.current;
@@ -117,15 +96,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshSession]);
 
   /**
-   * A aba reconfere quem ela é ao voltar para a frente (SPEC_CP24 RF-4).
+   * A aba reconfere quem ela é ao voltar para a frente.
    *
-   * A sessão é um cookie do **navegador inteiro**; o usuário é estado React de
-   * **uma aba**. Quem entra com outra conta em outra aba troca o cookie das
-   * duas, e esta continua estampando o nome antigo enquanto já faz cada
-   * requisição como a conta nova — foi assim que uma tela de cliente ficou
-   * exibindo "nenhum ingresso": o servidor estava respondendo certo, para a
-   * portaria. Voltar para a aba é justamente o instante em que a resposta pode
-   * ter mudado, então é o instante de perguntar de novo.
+   * A sessão é um cookie do navegador inteiro; o usuário é estado React de uma
+   * aba. Entrar com outra conta em outra aba troca o cookie das duas, e esta
+   * seguia estampando o nome antigo enquanto já pedia como a conta nova — foi
+   * assim que uma tela de cliente ficou exibindo "nenhum ingresso".
    */
   useEffect(() => {
     let lastCheck = Date.now();
@@ -171,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore */ }
     api.clearCsrfToken();
     // Sai a sessão, sai o cache: o próximo a entrar neste computador não pode
-    // encontrar os ingressos de quem saiu (SPEC_CP24 RF-5)
+    // encontrar os ingressos de quem saiu
     applySession(null);
   };
 
@@ -188,10 +164,7 @@ export function useAuth() {
   return ctx;
 }
 
-/**
- * Returns the default route for a given user role.
- * Used for post-login/register redirect and guest route protection.
- */
+/** Para onde cada papel vai depois de entrar. */
 export function getDefaultRoute(role: string): string {
   switch (role) {
     case 'organizer': return '/organizer';

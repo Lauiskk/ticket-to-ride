@@ -177,8 +177,6 @@ export function GateValidationPage() {
     };
   }, [selected, scannerActive, handleValidation]);
 
-  // ─── Step 1: which door am I at? ──────────────────────────────────────────
-
   if (!selected) {
     return (
       <div className="min-h-screen bg-board-navy py-10 px-4">
@@ -278,8 +276,6 @@ export function GateValidationPage() {
       </div>
     );
   }
-
-  // ─── Step 2: read tickets ─────────────────────────────────────────────────
 
   const verdict = result ? verdictFor(result) : null;
 

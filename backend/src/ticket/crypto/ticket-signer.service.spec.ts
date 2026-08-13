@@ -23,8 +23,6 @@ describe('TicketSignerService', () => {
     service = new TicketSignerService(mockConfig);
   });
 
-  // ─── Property 24: HMAC Sign/Verify Round-Trip ─────────────────────────────
-
   describe('Property 24: HMAC Sign/Verify Round-Trip', () => {
     it('signing then verifying the same payload returns true', () => {
       fc.assert(
@@ -101,8 +99,6 @@ describe('TicketSignerService', () => {
       );
     });
   });
-
-  // ─── Property 25: QR Payload Structure (No PII) ──────────────────────────
 
   describe('Property 25: QR Payload Structure (No PII)', () => {
     it('encoded QR contains only tid, eid, seat, iat, sig — no PII', () => {

@@ -1,4 +1,3 @@
-// ─── User & Auth ────────────────────────────────────────────────────────────
 
 export type UserRole = 'organizer' | 'client' | 'gate';
 
@@ -19,8 +18,6 @@ export interface AuthResponse {
    */
   csrfToken: string;
 }
-
-// ─── Events ─────────────────────────────────────────────────────────────────
 
 export type EventStatus = 'draft' | 'published' | 'cancelled';
 export type SeatingType = 'numbered' | 'general-admission';
@@ -67,8 +64,6 @@ export interface EventSearchParams {
   radius?: number;
 }
 
-// ─── Seats ──────────────────────────────────────────────────────────────────
-
 export type SeatStatus = 'available' | 'reserved' | 'sold';
 
 export interface Seat {
@@ -82,8 +77,6 @@ export interface Seat {
   createdAt: string;
   updatedAt: string;
 }
-
-// ─── Reservations ───────────────────────────────────────────────────────────
 
 export type ReservationStatus = 'pending_payment' | 'paid' | 'expired' | 'payment_failed' | 'refunded';
 
@@ -103,14 +96,10 @@ export interface CreateReservationPayload {
   seatIds: string[];
 }
 
-// ─── Payments ───────────────────────────────────────────────────────────────
-
 export interface PaymentIntent {
   clientSecret: string;
   paymentId: string;
 }
-
-// ─── Tickets ────────────────────────────────────────────────────────────────
 
 export type TicketStatus = 'active' | 'used' | 'invalidated';
 
@@ -143,15 +132,11 @@ export interface Ticket {
   createdAt: string;
 }
 
-// ─── Sharing ────────────────────────────────────────────────────────────────
-
 export interface SharingLink {
   token: string;
   shareUrl: string;
   expiresAt: string;
 }
-
-// ─── Gate Validation ────────────────────────────────────────────────────────
 
 export interface ValidationResult {
   valid: boolean;
@@ -171,8 +156,6 @@ export interface ValidateTicketPayload {
   qrPayload: string;
   eventId: string;
 }
-
-// ─── Catalog ────────────────────────────────────────────────────────────────
 
 export type CatalogSource = 'ticketmaster' | 'tmdb';
 
@@ -200,8 +183,6 @@ export interface CatalogSearchResult {
   pageSize: number;
 }
 
-// ─── Pagination ─────────────────────────────────────────────────────────────
-
 export interface PaginatedMeta {
   total: number;
   page: number;
@@ -214,16 +195,12 @@ export interface PaginatedResponse<T> {
   meta: PaginatedMeta;
 }
 
-// ─── API Error ──────────────────────────────────────────────────────────────
-
 export interface ApiError {
   message: string;
   code: string;
   statusCode: number;
   errors?: Array<{ field: string; message: string; code: string }>;
 }
-
-// ─── WebSocket ──────────────────────────────────────────────────────────────
 
 /** Sales panel for one event (GET /events/:id/metrics) — aggregates only. */
 export interface EventMetrics {

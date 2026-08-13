@@ -1,8 +1,5 @@
-# ╔═══════════════════════════════════════════════════════════════════════╗
-# ║  Ticket to Ride — Local Development Stack                            ║
-# ║  Usage: docker-compose up -d                                         ║
-# ║  Credentials: loaded from backend/.env (never hardcoded here)        ║
-# ╚═══════════════════════════════════════════════════════════════════════╝
+# Ambiente local: Postgres, Redis e a API em watch.
+# As credenciais vêm de backend/.env — nada de segredo neste arquivo.
 
 services:
   postgres:

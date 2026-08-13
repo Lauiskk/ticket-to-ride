@@ -1,615 +1,561 @@
-# Ticket to Ride — Event Ticketing Platform
+# Ticket to Ride
 
-Uma plataforma completa de eventos e ingressos onde organizadores publicam eventos, clientes compram ingressos e a portaria valida a entrada via QR Code.
+Plataforma de eventos e ingressos. O organizador monta um evento a partir do
+catálogo do Ticketmaster/TMDb, o cliente escolhe o lugar e paga, recebe um
+ingresso com QR assinado, e a portaria valida na entrada.
+
+**Aplicação publicada:** https://ticket-to-ride-psi.vercel.app
+**API:** https://ticket-to-ride-production-ebbe.up.railway.app/health
+
+| Papel | Entrar com | Senha |
+|---|---|---|
+| Organizador | `organizer@ticket.dev` | `Organizer123!` |
+| Cliente | `client1@ticket.dev` | `Client123!` |
+| Cliente (para testar transferência) | `client2@ticket.dev` | `Client123!` |
+| Portaria | `gate@ticket.dev` | `Gate123!` |
+
+Cartão de teste da Stripe: `4242 4242 4242 4242`, validade futura, qualquer CVC.
+Para ver a recusa: `4000 0000 0000 0002`.
+
+> **Atalho para avaliar em 5 minutos.** Entre como cliente e compre um lugar em
+> **"Sessão Cult — Cidade de Deus (ACONTECENDO AGORA)"**. Esse evento existe no
+> seed justamente para isso: ele já está com a entrada aberta, então dá para
+> comprar, abrir "Meus ingressos", copiar o código e validar na portaria sem
+> esperar data nenhuma. Depois entre como `gate@ticket.dev` e leia o mesmo
+> ingresso duas vezes — a segunda leitura recusa.
 
 ---
 
 ## Sumário
 
+- [O que está implementado](#o-que-está-implementado)
+- [Como rodar](#como-rodar)
+- [Banco de dados](#banco-de-dados)
+- [Dados semeados](#dados-semeados)
 - [Arquitetura](#arquitetura)
-- [Stack Tecnológico](#stack-tecnológico)
-- [Decisões Técnicas](#decisões-técnicas)
-- [Como Rodar](#como-rodar)
-- [Seed de Dados](#seed-de-dados)
-- [Endpoints da API](#endpoints-da-api)
-- [Checkpoints](#checkpoints)
+- [Decisões, e o que foi descartado](#decisões-e-o-que-foi-descartado)
+- [O que fiz além do pedido, e por quê](#o-que-fiz-além-do-pedido-e-por-quê)
+- [API](#api)
 - [Testes](#testes)
 - [Segurança](#segurança)
 - [Uso de IA](#uso-de-ia)
 - [Deploy](#deploy)
-- [Tradeoffs e Limitações](#tradeoffs-e-limitações)
+- [O que não está como deveria](#o-que-não-está-como-deveria)
+- [Estrutura do repositório](#estrutura-do-repositório)
 
-> **Para avaliar rápido:** o processo está em [`docs/plan/`](docs/plan/) — uma
-> spec por checkpoint, cada uma com os critérios de aceitação e a tabela do que
-> foi **medido** na validação. Como a IA foi usada (e onde ela errou) está em
-> [`docs/IA.md`](docs/IA.md). O modelo de ameaças está em
-> [`SDD/05-seguranca/`](SDD/05-seguranca/).
+---
+
+## O que está implementado
+
+### Obrigatórios do enunciado
+
+| Requisito | Onde |
+|---|---|
+| Navegação e busca de eventos publicados, com data, local e preço | `/events` — busca por texto, cidade, faixa de preço, período, ordenação e proximidade |
+| Criação e gestão de eventos pelo organizador | `/organizer` — assistente em 4 passos, a partir do catálogo externo |
+| Reserva com **mapa de assentos** | Eventos numerados: cinema/teatro, assento a assento |
+| Reserva por **quantidade** | Eventos de pista: seletor de quantidade por setor |
+| Pagamento simulado, com confirmação **e recusa** | Stripe em modo de teste; sem chave configurada, cai num modo simulado que fecha o mesmo fluxo |
+| "Meus ingressos" com QR | `/my-tickets`, e o ingresso em tela cheia em `/my-tickets/:id` |
+| Tela de portaria com retorno claro | Válido · já utilizado · evento errado · fora do horário · evento cancelado |
+| Leitura do QR pela câmera, com digitação manual | `/gate` — câmera via `html5-qrcode`, campo de texto ao lado |
+| Catálogo externo | Ticketmaster Discovery **e** TMDb, com cache de 1 h no Redis |
+| Três papéis distintos | Organizador, Cliente, Portaria — separados por guard e por interface |
+| Persistência de eventos, reservas e ingressos | PostgreSQL 16 via TypeORM |
+| Mesmo lugar não vendido duas vezes | `SELECT … FOR UPDATE NOWAIT` dentro de transação |
+| QR que não pode ser forjado | Payload assinado com HMAC-SHA256, conferido antes de qualquer consulta |
+| Compartilhar ingresso por link gerado pela aplicação | `/share/:token` — o destinatário vê o que está recebendo antes de aceitar |
+| Mesmo ingresso não validado duas vezes | Marcação atômica; a segunda leitura recusa com a hora da primeira |
+
+O enunciado pedia mapa de assentos **ou** quantidade. Os dois estão feitos,
+porque são experiências de compra diferentes e eu queria as duas no ar.
+
+### Opcionais pontuados
+
+Busca e filtro · painel do organizador · **cancelamento com devolução ao
+estoque e estorno** · mapa de assentos em tempo real (WebSocket) · Docker
+Compose · testes (163) · aplicação publicada.
+
+---
+
+## Como rodar
+
+Pré-requisitos: **Node.js 20+** e **Docker**. Sem Docker também dá — ver
+[Banco de dados](#banco-de-dados).
+
+```bash
+git clone https://github.com/Lauiskk/ticket-to-ride.git
+cd "ticket-to-ride"
+```
+
+### 1. Variáveis de ambiente
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
+
+O `backend/.env.example` traz valores locais que já funcionam para
+`DATABASE_URL` e `REDIS_URL`. Você precisa preencher:
+
+| Variável | Obrigatória? | Onde conseguir |
+|---|---|---|
+| `JWT_SECRET` | sim | qualquer string de 32+ caracteres |
+| `TICKET_SIGNING_SECRET` | sim | idem — é o que assina o QR |
+| `TICKETMASTER_API_KEY` | sim | https://developer.ticketmaster.com |
+| `TMDB_API_KEY` | não | https://developer.themoviedb.org |
+| `STRIPE_SECRET_KEY` | não | sem ela o checkout entra em modo simulado |
+| `STRIPE_WEBHOOK_SECRET` | não | só necessário com a Stripe ligada |
+
+Para gerar os dois segredos:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+A API **não sobe** se faltar uma variável obrigatória: ela falha no boot dizendo
+qual, em vez de quebrar mais adiante com um erro que não aponta para nada.
+
+### 2. Subir tudo
+
+```bash
+docker compose up -d
+```
+
+Isso levanta PostgreSQL 16, Redis 7 e a API em modo watch, na porta 3000.
+Confira com:
+
+```bash
+curl http://localhost:3000/health
+```
+
+### 3. Popular o banco
+
+```bash
+cd backend && npm install && npm run seed
+```
+
+O seed é idempotente: rodar de novo não duplica nada, sai na hora se já houver
+usuário.
+
+### 4. Subir o site
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+http://localhost:5173. O Vite faz proxy de `/api` para a API, então em
+desenvolvimento tudo é mesma origem e você não precisa mexer em CORS.
+
+> **Se algo parecer não ter surtido efeito**, reconstrua o contêiner da API:
+> `docker compose up -d --build api`. Bind mount do Windows não propaga evento
+> de arquivo de forma confiável, e o watcher já ficou horas servindo código
+> antigo sem avisar — o pior tipo de falha, a que parece sucesso.
+
+---
+
+## Banco de dados
+
+**PostgreSQL 16.** A escolha foi por três coisas que o projeto usa de verdade:
+`SELECT … FOR UPDATE NOWAIT` (é o que impede vender o mesmo lugar duas vezes),
+`JSONB` (as declarações de meia-entrada e a configuração do mapa de assentos) e
+trigonometria em SQL para ordenar eventos por proximidade.
+
+### Com Docker (recomendado)
+
+Nada a fazer: o `docker-compose.yml` sobe `postgres:16-alpine` já com o banco
+`ticket_to_ride` criado, usuário `postgres`, senha `postgres`, na porta 5432,
+com volume nomeado para os dados sobreviverem a um `down`.
+
+### Sem Docker
+
+1. Instale PostgreSQL 16 e Redis 7.
+2. Crie o banco:
+   ```sql
+   CREATE DATABASE ticket_to_ride;
+   ```
+3. Aponte o `backend/.env` para ele:
+   ```
+   DATABASE_URL=postgres://usuario:senha@localhost:5432/ticket_to_ride
+   REDIS_URL=redis://localhost:6379
+   ```
+4. Suba a API: `cd backend && npm run start:dev`
+
+### Como o schema é criado
+
+Pelo `synchronize` do TypeORM, no boot, a partir das entidades. **Não há
+migrations** — é uma limitação assumida e está explicada em
+[O que não está como deveria](#o-que-não-está-como-deveria).
+
+Na prática, você não roda comando de migração nenhum: suba a API e as tabelas
+aparecem. Oito entidades: `users`, `events`, `seats`, `reservations`,
+`reservation_seats`, `payments`, `tickets`, `sharing_links`.
+
+### Redis
+
+Usado para três coisas, todas com degradação graciosa: lista de tokens
+revogados, contagem de falhas de login e cache do catálogo externo. **Se o Redis
+cair, a aplicação continua de pé** — o que se perde é revogação imediata de
+token e a proteção contra força bruta, e os dois casos vão para o log.
+
+---
+
+## Dados semeados
+
+`npm run seed` cria os quatro usuários da tabela do topo e **16 eventos
+publicados** montados a partir de dados reais do Ticketmaster e do TMDb
+(o número final varia com o que as APIs devolvem no momento), somando cerca de
+6.000 assentos entre numerados e pista.
+
+Um deles é deliberado: **"Sessão Cult — Cidade de Deus (ACONTECENDO AGORA)"**,
+com data no passado recente e a janela de entrada aberta. Sem ele, testar a
+portaria exigiria esperar a data de algum evento chegar — que é o tipo de
+detalhe que só aparece quando alguém tenta usar o sistema de verdade.
 
 ---
 
 ## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    React/Vite Frontend                    │
-│         (Board game theme, carousels, seat maps)         │
-└─────────────────────────┬───────────────────────────────┘
-                          │ HTTP + WebSocket
-┌─────────────────────────▼───────────────────────────────┐
-│                     NestJS API Server                     │
-│                                                          │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────┐ ┌────────┐  │
-│  │   Auth   │ │  Events  │ │ Reservation │ │Payment │  │
-│  │  Module  │ │  Module  │ │   Module    │ │ Module │  │
-│  └──────────┘ └──────────┘ └─────────────┘ └────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌─────────────┐             │
-│  │  Ticket  │ │   Gate   │ │   Sharing   │             │
-│  │  Module  │ │  Module  │ │   Module    │             │
-│  └──────────┘ └──────────┘ └─────────────┘             │
-│                                                          │
-│  ┌──────────────── Shared Module ─────────────────────┐  │
-│  │ GlobalExceptionFilter | ResponseInterceptor        │  │
-│  │ AuthGuard | RolesGuard | ValidationPipe            │  │
-│  │ RequestIdMiddleware | AppError + ErrorCodes        │  │
-│  └────────────────────────────────────────────────────┘  │
-└────────────┬──────────────────┬──────────────────┬───────┘
-             │                  │                  │
-     ┌───────▼──────┐  ┌───────▼──────┐  ┌───────▼──────┐
-     │ PostgreSQL 16│  │   Redis 7    │  │  Stripe API  │
-     │  (TypeORM)   │  │ (blacklist,  │  │ (test mode)  │
-     │              │  │  rate limit, │  │              │
-     │              │  │  cache)      │  │              │
-     └──────────────┘  └──────────────┘  └──────────────┘
+React + Vite  ──HTTP──►  NestJS  ──►  PostgreSQL 16   (eventos, reservas, ingressos)
+   (Vercel)   ◄─WS────  (Railway)  ──►  Redis 7        (blacklist, rate limit, cache)
+                                    ──►  Stripe (test)  (cobrança e estorno)
+                                    ──►  Ticketmaster / TMDb (catálogo)
 ```
 
-### Padrões aplicados (dos projetos de referência)
+Um módulo NestJS por assunto do domínio, cada um com controller, service, DTOs e
+entidades:
 
-| Padrão | Origem | Implementação |
-|--------|--------|---------------|
-| CustomError + ErrorCodes | Go/Fiber API | `AppError` class com `code`, `statusCode`, `message`, `errors[]` |
-| ResponseHandler | Go/Fiber API | `ResponseInterceptor` — passthrough ou pagination envelope |
-| Permission middleware | Go/Fiber API | `RolesGuard` + `@Roles()` decorator |
-| Entity-based folders | Go/Fiber API | Cada módulo NestJS tem controller/service/dto/entity |
-| Defense in depth | CyberAI | Ownership check no service layer (não só no guard) |
-| Anti-enumeration | CyberAI | 404 para cross-user access, 403 para ownership violation |
-| Fail-open blacklist | CyberAI | Redis indisponível → permite request + loga `BLACKLIST_UNAVAILABLE` |
-| Argon2id | CyberAI | Hash de senhas com memoryCost=65536, timeCost=3, parallelism=4 |
-| Rate limiting degradado | CyberAI | Redis down → in-memory fallback + loga `RATE_LIMIT_DEGRADED` |
-| Idempotência | Prism/Elixir | Seed idempotente, webhook idempotente, token generation idempotente |
-| State machine | Prism/Elixir | Event(draft→published→cancelled), Reservation, Ticket, SharingLink |
-| Scope-based access | Prism/Elixir | Queries sempre filtram por userId no service layer |
+| Módulo | Responsabilidade |
+|---|---|
+| `auth` | Sessão, papéis, 2FA, OAuth, limite de tentativas de login |
+| `event` | CRUD do organizador, vitrine pública, métricas de bilheteria |
+| `event/catalog` | Ticketmaster e TMDb, com cache e degradação |
+| `reservation` | Bloqueio de assentos, expiração, WebSocket do mapa |
+| `payment` | Stripe, webhook, reconciliação, estorno |
+| `ticket` | Emissão, assinatura HMAC, geração do QR |
+| `gate` | Validação na entrada e agenda da portaria |
+| `sharing` | Link de transferência e troca de dono |
+| `shared` | Erros, filtro global, guards, interceptors, config |
 
----
-
-## Stack Tecnológico
-
-| Camada | Tecnologia | Por que esta e não outra |
-|--------|------------|--------------------------|
-| Backend | **NestJS 10** (TypeScript) | Módulos, DI, guards, interceptors — mapeia diretamente para a arquitetura do Go reference |
-| ORM | **TypeORM** | Suporta `SELECT FOR UPDATE NOWAIT`, UUID PKs, @VersionColumn, migrations |
-| Database | **PostgreSQL 16** | Confiável, suporta Haversine geo-queries, JSONB, constraint triggers |
-| Cache | **Redis 7** | Rate limiting, token blacklist, catalog cache — tudo com fail-open |
-| Auth | **Passport.js + JWT** | Dual-source (cookie + header), TOTP 2FA via otplib |
-| Password | **@node-rs/argon2** | Argon2id nativo em Rust, sem problemas de compilação C++ no Windows |
-| Payment | **Stripe** (test mode) | Melhor sandbox da indústria, webhook idempotent built-in |
-| QR Code | **qrcode** package | PNG preferred, JPEG fallback, base64 data URL |
-| Real-time | **Socket.io** via @nestjs/websockets | Room-based para updates por evento |
-| Signing | **Node.js crypto** (HMAC-SHA256) | Nativo, sem dependências externas, constant-time verify |
+**Por que DTOs em toda entrada e saída.** Entrada: a validação é declarada no
+DTO e aplicada por um `ValidationPipe` global com `whitelist` e
+`forbidNonWhitelisted` — campo que não está no DTO é removido, e se vier
+sobrando, a requisição é recusada. É isso que impede alguém de mandar
+`{"role": "organizer"}` no cadastro ou `{"totalAmount": 0}` na reserva. Saída: o
+DTO de resposta é a lista do que pode sair. `EventResponseDto` existe porque a
+entidade `Event` carrega `organizerId`, e a resposta pública não pode carregar —
+sem uma camada explícita, basta alguém adicionar um campo na entidade para ele
+vazar na API sem ninguém decidir isso.
 
 ---
 
-## Decisões Técnicas
+## Decisões, e o que foi descartado
 
-### Por que NestJS e não Express puro?
+**NestJS, não Express puro.** Guards, pipes, interceptors e injeção de
+dependência já vêm prontos e compostos. Com Express eu escreveria essa camada à
+mão, e ela é exatamente onde moram as decisões de segurança. O custo é
+boilerplate de decorator.
 
-Express é minimalista — precisaríamos construir guards, DI, interceptors, validation do zero. NestJS entrega isso out of the box com uma arquitetura que mapeia 1:1 para o pattern entity-based do projeto Go de referência. Trade-off: mais boilerplate (decorators), mas muito mais estrutura.
+**TypeORM, não Prisma.** O Prisma é melhor em quase tudo — menos no que este
+projeto tem de mais crítico: ele não expõe `SELECT … FOR UPDATE NOWAIT`. Como a
+disputa por assento é o coração do sistema, escolhi a ferramenta que dá controle
+sobre o bloqueio, mesmo com mais armadilhas em volta.
 
-### Por que TypeORM e não Prisma?
+**HMAC-SHA256 no ingresso, não JWT.** O QR precisa ser lido numa tela rachada,
+no escuro, numa fila. Um JWT tem ~300 caracteres; o payload assinado tem ~150, e
+o QR fica com menos módulos e mais tolerância a leitura ruim. A troca aceita: a
+portaria precisa de rede — não valida offline.
 
-Prisma não suporta `SELECT FOR UPDATE NOWAIT` nativamente. A concorrência de assentos é o ponto mais crítico do sistema. TypeORM com `queryRunner` e `pessimistic_write_or_fail` dá controle total sobre o locking behavior. Trade-off: TypeORM tem mais footguns, mas para este caso a flexibilidade compensa.
+**Catálogo é fonte, não estoque.** O organizador *monta* o evento dele a partir
+do Ticketmaster/TMDb: escolhe o show ou filme como ponto de partida e define
+data, local, capacidade e preço. Ele não "assume" um evento que já existe lá
+fora. Dois organizadores podem criar sessões do mesmo filme, o que é o que
+acontece no mundo real.
 
-### Por que HMAC-SHA256 e não JWT para tickets?
+**A portaria não vê a loja; o organizador vê.** A portaria é um aparelho parado
+numa porta — catálogo ali é distração. Eu tinha bloqueado o organizador também,
+e quem testou reclamou que ficava preso sem saída. Estavam certos: eu tinha
+confundido *não poder comprar* com *não poder olhar*. Revertido — hoje o
+organizador navega, e o que ele vê no lugar do botão de compra é o mapa de
+ocupação do próprio evento.
 
-QR codes precisam ser compactos. Um JWT tem ~300 chars; nosso HMAC payload tem ~150 chars. Além disso, apenas o server verifica tickets (na portaria) — não precisa de verificação client-side que RSA/JWT permite. Trade-off: o gate precisa de conectividade com o server (não pode verificar offline).
+**Sessão em cookie `httpOnly`, não `localStorage`.** Token em `localStorage` é
+lido por qualquer script que rode na página. A troca traz CSRF junto, porque
+agora o navegador anexa credencial sozinho — daí a dupla submissão de token e o
+corpo restrito a JSON, que é o que fecha o vetor do `<form>` de outro site.
 
-### Por que fail-open no blacklist?
+**Estorno fora da transação do banco.** Segurar bloqueio de banco durante
+latência de rede é ruim; estornar antes do commit é pior. O cancelamento vale na
+hora, o dinheiro volta em seguida, e a falha aparece no log — visível e
+reprocessável, não silenciosa.
 
-Se Redis cair, preferimos que um token revogado funcione por até 15 minutos (vida do access token) do que derrubar toda a autenticação do sistema. O trade-off é aceito porque: (a) access tokens expiram rápido, (b) logamos `BLACKLIST_UNAVAILABLE` para alerting.
+**Cortei animação.** A primeira versão da interface tinha movimento decorativo
+por toda parte, inclusive um componente animado por assento no mapa. Tirei quase
+tudo: o primeiro carregamento caiu de 895 KB para 381 KB e o mapa passou a
+responder em 1,3 ms para 6 cliques.
 
-### Por que não usar um auth provider externo (Supabase/Clerk)?
-
-O briefing pede controle total sobre 2FA, magic links, OTP, e OAuth. Providers externos limitam customização e adicionam uma dependência de rede para TODA operação autenticada. Trade-off: mais código nosso, mas zero dependência de terceiros para auth.
-
----
-
-## Como Rodar
-
-### Pré-requisitos
-
-- Node.js 20+ (recomendado: 20 LTS)
-- Docker + Docker Compose (para PostgreSQL e Redis)
-- Uma Stripe test key (opcional — o sistema funciona sem para testes locais)
-
-### Setup rápido
-
-```bash
-# 1. Clone o projeto
-cd "Ticket to ride project"
-
-# 2. Instale dependências do backend
-cd backend
-npm install
-
-# 3. Configure variáveis de ambiente
-cp .env.example .env
-# Edite .env com suas keys (ou use os valores default para dev local)
-
-# 4. Suba PostgreSQL + Redis via Docker
-cd ..
-docker-compose up -d
-
-# 5. Rode o seed (popula dados iniciais)
-cd backend
-npm run seed
-
-# 6. Inicie a API em modo desenvolvimento
-npm run start:dev
-```
-
-A API estará disponível em `http://localhost:3000`.
-
-### Sem Docker (PostgreSQL e Redis locais)
-
-Se já tiver PostgreSQL 16 e Redis 7 rodando localmente:
-
-1. Crie o database: `CREATE DATABASE ticket_to_ride;`
-2. Configure `DATABASE_URL=postgres://user:pass@localhost:5432/ticket_to_ride` no `.env`
-3. Configure `REDIS_URL=redis://localhost:6379` no `.env`
-4. O TypeORM sincroniza as tabelas automaticamente em modo development (`synchronize: true`)
+**O que decidi não fazer**, e por quê: migrar para o Nest 11 a dias da entrega
+(risco alto, ganho zero para quem avalia); trocar o handshake do OAuth por
+código de uso único (redesenho, e o token já saiu da URL); perseguir 100% de
+cobertura (teste escrito para subir número não testa nada).
 
 ---
 
-## Seed de Dados
+## O que fiz além do pedido, e por quê
 
-O comando `npm run seed` cria:
+**Meia-entrada.** Não estava no enunciado, mas um sistema de ingressos
+brasileiro sem meia-entrada não é um sistema de ingressos brasileiro. É
+declarada no checkout, por assento, com cota configurável pelo organizador — e a
+cota é conferida dentro da transação, senão dois compradores simultâneos passam
+os dois pela última vaga. Na portaria, o operador vê um alerta e o documento
+declarado **mascarado**, mantendo os 4 últimos dígitos: ele precisa *comparar* o
+documento, não *aprender* o número. Tela de portão é lida por cima do ombro.
 
-| Tipo | Dados |
-|------|-------|
-| Organizer | `organizer@ticket.dev` / `Organizer123!` |
-| Client 1 | `client1@ticket.dev` / `Client123!` |
-| Client 2 | `client2@ticket.dev` / `Client123!` |
-| Gate | `gate@ticket.dev` / `Gate123!` |
-| Event | "Rock in Rio - Noite Inaugural" (publicado, 14 dias no futuro) |
-| Seats | 50 numerados (VIP + Pista Premium) + 200 pista geral |
+**Ordenação por proximidade.** Quem procura evento procura evento *perto*. Com a
+permissão de localização, a vitrine ordena por distância real (Haversine em SQL).
 
-O seed é **idempotente** — rodar várias vezes não duplica dados.
+**Login com Google.** Uma conta a menos para criar antes de conseguir comprar.
 
----
+**2FA (TOTP).** Opcional por conta.
 
-## Endpoints da API
+**Painel de bilheteria do organizador.** Ocupação, receita e ritmo de venda —
+**só agregado**. Quem produz precisa saber como a casa está enchendo, não quem
+comprou o quê. Nenhuma identidade de comprador aparece ali.
 
-### Autenticação
+**Tempo real nos dois lados.** O mapa de assentos apaga o lugar para todo mundo
+no instante em que alguém reserva, e o ingresso na mão do cliente vira
+"Utilizado" no instante em que a portaria lê — sem recarregar.
 
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /auth/register` | Public | — | Cria conta |
-| `POST /auth/login` | Public | — | Login (retorna JWT em cookie HttpOnly) |
-| `POST /auth/logout` | Auth | JWT | Invalida token |
-| `POST /auth/refresh` | Auth | JWT | Renova access token |
-| `POST /auth/2fa/enable` | Auth | JWT | Gera secret TOTP |
-| `POST /auth/2fa/verify` | Auth | JWT | Verifica código 2FA |
-
-### Catálogo Externo
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `GET /catalog/search` | Organizer | JWT | Busca Ticketmaster + TMDb |
-
-### Eventos
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /events` | Organizer | JWT | Cria evento (draft) |
-| `PATCH /events/:id/publish` | Organizer | JWT | Publica evento |
-| `PATCH /events/:id/cancel` | Organizer | JWT | Cancela evento |
-| `GET /events/my/list` | Organizer | JWT | Meus eventos |
-| `GET /events` | Public | — | Browse com filtros/paginação |
-| `GET /events/:id` | Public | — | Detalhes do evento |
-
-### Reservas
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /reservations` | Client | JWT | Reserva assentos (lock NOWAIT) |
-| `GET /reservations/my` | Client | JWT | Minhas reservas |
-| `GET /reservations/seats/:eventId` | Public | — | Assentos disponíveis |
-
-### Pagamento
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /payments/:reservationId` | Client | JWT | Cria PaymentIntent (Stripe) |
-| `POST /payments/webhook` | Public | Stripe Sig | Webhook do Stripe |
-
-### Ingressos
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `GET /tickets` | Client | JWT | Meus ingressos |
-| `GET /tickets/:id` | Client | JWT | Detalhe do ingresso |
-
-### Portaria
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /gate/validate` | Gate | JWT | Valida QR code |
-
-### Compartilhamento
-
-| Endpoint | Método | Auth | Descrição |
-|----------|--------|------|-----------|
-| `POST /sharing/tickets/:id/share` | Client | JWT | Gera link |
-| `POST /sharing/:token/accept` | Client | JWT | Aceita transferência |
+**CI no GitHub Actions.** Testes e build do backend, typecheck e build do
+frontend, build da imagem Docker, e `npm audit` reprovando vulnerabilidade
+crítica.
 
 ---
 
-## Checkpoints
+## API
 
-O projeto foi construído incrementalmente em 9 checkpoints:
+Autenticação por cookie `httpOnly`; o header `Authorization: Bearer` também é
+aceito, o que mantém `curl` e testes de fluxo funcionando sem navegador.
+Mutações exigem o header `X-CSRF-Token`.
 
-| # | Checkpoint | O que entrega |
-|---|-----------|---------------|
-| 1 | Project Setup | Error handling padronizado, validation pipe, request ID, Docker Compose |
-| 2 | Database Schema | 8 entities TypeORM, migrations, seed idempotente |
-| 3 | Auth & RBAC | JWT dual-source, Argon2id, 2FA, rate limiting, guards globais |
-| 4 | External Catalog | Ticketmaster + TMDb com cache Redis 1h e fallback |
-| 5 | Event CRUD | Criar, publicar, cancelar, browse com filtros e geo-sort |
-| 6 | Reservations | Pessimistic locking (NOWAIT), multi-seat atomic, expiration, WebSocket |
-| 7 | Payment | Stripe test mode, webhooks idempotentes, state transitions |
-| 8 | Tickets + Gate | HMAC-SHA256 QR, retry 3x, validação com status preservation |
-| 9 | Sharing | Link 48h, prioridade USED > EXPIRED, transfer com novo QR |
+| Método | Rota | Quem pode | O que faz |
+|---|---|---|---|
+| `POST` | `/auth/register` | público | Cria conta |
+| `POST` | `/auth/login` | público | Entra |
+| `GET` | `/auth/me` | sessão | Quem está logado |
+| `POST` | `/auth/logout` | sessão | Revoga o token |
+| `POST` | `/auth/refresh` | sessão | Renova a sessão |
+| `POST` | `/auth/2fa/enable` · `/auth/2fa/verify` | sessão | TOTP |
+| `GET` | `/auth/google` · `/auth/google/callback` | público | OAuth |
+| `GET` | `/catalog/search` · `/catalog/classifications` | organizador | Ticketmaster + TMDb |
+| `GET` | `/events` | público | Vitrine, com filtros e paginação |
+| `GET` | `/events/:id` | público | Detalhe |
+| `POST` | `/events` | organizador | Cria (rascunho) |
+| `PATCH` | `/events/:id/publish` | organizador | Publica |
+| `PATCH` | `/events/:id/cancel` | organizador | Cancela, devolve e estorna |
+| `GET` | `/events/my/list` | organizador | Meus eventos |
+| `GET` | `/events/:id/metrics` | organizador (dono) | Bilheteria |
+| `POST` | `/reservations` | cliente | Reserva com bloqueio |
+| `POST` | `/reservations/:id/cancel` | cliente | Desiste e devolve os lugares |
+| `GET` | `/reservations/my` | cliente | Minhas reservas |
+| `GET` | `/reservations/seats/:eventId` | público | Assentos e status |
+| `POST` | `/payments/:reservationId` | cliente | Abre a cobrança |
+| `GET` | `/payments/:reservationId/status` | cliente | Estado + reconciliação |
+| `POST` | `/payments/:reservationId/confirm` | cliente | Só no modo simulado |
+| `POST` | `/payments/webhook` | Stripe | Assinatura verificada |
+| `GET` | `/tickets` · `/tickets/:id` | cliente (dono) | Meus ingressos |
+| `POST` | `/sharing/tickets/:ticketId/share` | cliente (dono) | Gera o link |
+| `GET` | `/sharing/:token` | público | Prévia, sem consumir |
+| `POST` | `/sharing/:token/accept` | cliente | Aceita a transferência |
+| `GET` | `/gate/events` | portaria | Agenda da portaria |
+| `POST` | `/gate/validate` | portaria | Valida o QR |
+| `GET` | `/health` | público | Estado do banco e do Redis |
 
 ---
 
 ## Testes
 
 ```bash
-# Rodar todos os testes
-npm run test
-
-# Rodar com coverage
-npm run test:cov
-
-# Rodar um arquivo específico
-npx jest --testPathPattern "nome-do-arquivo"
+cd backend && npm test          # 163 testes, 19 suítes
+cd backend && npm run test:cov  # com cobertura
+cd frontend && npx tsc -b       # typecheck do site
 ```
 
-### Tipos de teste implementados
+São dois tipos. **Testes de unidade** cobrem os serviços com cenário montado —
+webhook repetido não emite ingresso duas vezes, cancelar duas vezes não estorna
+duas vezes, link usado vence link expirado. E **property tests** com
+`fast-check`, que geram entrada aleatória para checar invariantes: resposta de
+erro nunca carrega metadados de paginação, `hash` + `verify` fecha para qualquer
+string, a matriz de papéis não tem buraco.
 
-| Tipo | Ferramenta | O que testa |
-|------|-----------|-------------|
-| Property tests | fast-check + Jest | Propriedades universais (P1-P34 do design document) |
-| Unit tests | Jest + mocks | Services, guards, filters com cenários específicos |
-| Seed test | Jest | Idempotência do seed (rodar 2x = mesmo resultado) |
-
-### Exemplos de property tests
-
-- **P1**: Error responses sempre têm `{message, code, statusCode}`, nunca pagination metadata
-- **P6**: `hash(password)` + `verify(password, hash)` = true para qualquer string
-- **P9**: O IP do cliente é `req.ip` — nunca o proxy à direita do `X-Forwarded-For`
-- **P11**: Matriz RBAC (Gate só valida, Organizer bloqueado de Client endpoints)
-
-> A P9 valia o contrário até o CP21, e passava verde defendendo o comportamento
-> errado. O caso está contado em [`docs/IA.md`](docs/IA.md) — teste que fixa o
-> defeito é pior que teste ausente, porque reprova quem tenta consertar.
+Um deles merece nota: o property test do IP do cliente **passava verde
+defendendo o comportamento errado**. Ele exigia que o IP fosse a entrada mais à
+direita do `X-Forwarded-For` — que é o proxy, o mesmo endereço para todo mundo.
+Com isso, o limitador de login contava todos os visitantes como uma pessoa só, e
+o teste teria reprovado qualquer tentativa de conserto. Teste que fixa o defeito
+é pior que teste ausente.
 
 ---
 
 ## Segurança
 
-Resumo do que existe; o raciocínio completo está em
-[`SDD/05-seguranca/MODELO_DE_AMEACAS.md`](SDD/05-seguranca/MODELO_DE_AMEACAS.md).
-
-| Ameaça | Defesa |
+| Ameaça | O que existe |
 |---|---|
-| Entrar sem pagar | QR assinado com HMAC-SHA256, conferido antes de qualquer consulta; validação marca `used`; evento cancelado não abre portão |
-| Mesmo lugar vendido duas vezes | `SELECT … FOR UPDATE NOWAIT` em transação; contenção real distinguida de falha de infraestrutura |
-| Roubo de sessão | JWT em cookie `httpOnly` (15 min) + CSRF de dupla submissão + corpo só JSON + CORS com lista fechada |
-| Força bruta | 5 falhas/15 min por IP → bloqueio de 30 min, com o IP do cliente de verdade |
-| Injeção | SQL sempre parametrizado; DTOs com `whitelist` + `forbidNonWhitelisted`; sem `eval`, sem `child_process`, sem `dangerouslySetInnerHTML` |
-| Vazamento de dados | 404 anti-enumeração; métricas só agregadas; documento mascarado na portaria; sala do WebSocket só com ids |
-| Abuso e cota externa | Limite por rota em cadastro, reserva, portaria e catálogo (protege a cota de 5.000/dia do Ticketmaster) |
+| Entrar sem pagar | QR assinado com HMAC-SHA256, conferido **antes** de qualquer consulta ao banco; validação marca `used`; evento cancelado não abre o portão |
+| Mesmo lugar vendido duas vezes | `SELECT … FOR UPDATE NOWAIT` em transação, com disputa real distinguida de falha de infraestrutura |
+| Roubo de sessão | JWT em cookie `httpOnly` de 15 min, CSRF de dupla submissão, corpo só JSON, CORS com lista fechada |
+| Força bruta no login | 5 falhas em 15 min por IP → 30 min de bloqueio, com o IP do cliente de verdade |
+| Injeção | SQL sempre parametrizado (as duas queries cruas usam `$1..$n`); DTOs com `whitelist` + `forbidNonWhitelisted`; sem `eval`, `child_process` ou `dangerouslySetInnerHTML` |
+| Enumeração de recursos | Recurso de outra pessoa responde **404**, nunca 403 — um 403 confirmaria que existe |
+| Vazamento de dados | Métricas só agregadas; documento mascarado na portaria; sala do WebSocket só com ids; senha e segredo de 2FA nunca saem em resposta |
+| Abuso e cota externa | Limite por rota em cadastro, reserva, pagamento, portaria e catálogo (protege a cota de 5.000 req/dia do Ticketmaster) |
 
-O CI reprova se entrar dependência de produção com vulnerabilidade **crítica**.
-As três `high` que restam estão nomeadas e justificadas em
-[`SDD/05-seguranca/DEPENDENCIAS.md`](SDD/05-seguranca/DEPENDENCIAS.md).
+Senha com **bcrypt, 12 rounds**. O modelo de ameaças completo, com o antes e
+depois de cada item, está em
+[`SDD/05-seguranca/MODELO_DE_AMEACAS.md`](SDD/05-seguranca/MODELO_DE_AMEACAS.md).
 
 ---
 
 ## Uso de IA
 
-O relato completo — ferramentas, em que partes, o que foi feito sem IA e as
-vezes em que a validação real reprovou o que a ferramenta tinha proposto — está
-em **[`docs/IA.md`](docs/IA.md)**.
+O relato está em **[`docs/IA.md`](docs/IA.md)**: quais ferramentas, em que
+partes, **o que fiz sem IA**, e os casos em que a validação real reprovou o que a
+ferramenta tinha proposto.
 
-Em resumo: o Claude Code escreveu a maior parte das linhas, sempre sob o fluxo
-*spec → teste vermelho → implementação → validação real com dado de verdade*
-descrito em [`AGENTS.md`](AGENTS.md). Os artefatos do processo estão versionados
-junto: 11 specs em [`docs/plan/`](docs/plan/), a documentação de sistema em
-[`SDD/`](SDD/), o contrato operacional em [`CLAUDE.md`](CLAUDE.md) e a
-configuração do agente em `.claude/`.
+Resumo: o Claude Code escreveu a maior parte das linhas, sempre sob o fluxo
+*spec → teste vermelho → implementação → validação real*, descrito em
+[`AGENTS.md`](AGENTS.md) e [`CLAUDE.md`](CLAUDE.md). Os artefatos do caminho
+estão versionados junto, como o enunciado pede: 12 specs com critérios de
+aceitação e evidência do que foi medido em [`docs/plan/`](docs/plan/), a
+documentação de sistema em [`SDD/`](SDD/), e a configuração do agente em
+`.claude/`.
+
+O histórico do git é a parte mais honesta: dá para ver os erros sendo cometidos
+e corrigidos, incluindo um `fix:` que desfaz uma decisão de dois commits antes.
 
 ---
 
 ## Deploy
 
-### Local (desenvolvimento)
+API no **Railway**, site na **Vercel**, ambos por push na `main`.
 
-```bash
-docker-compose up -d    # PostgreSQL 16 + Redis 7 + API
-npm run seed            # Popula dados iniciais
-npm run start:dev       # API com hot-reload na porta 3000
-```
+O que precisa estar configurado no Railway, além dos segredos do `.env`:
 
-O compose também sobe a API (`ttr-api`), montando `backend/src` e rodando
-`start:dev`. Se você editar o código com o contêiner rodando, prefira
-`docker compose up -d --build api` quando algo parecer não ter surtido efeito:
-bind mount do Windows não propaga eventos de arquivo, e o watcher já ficou horas
-servindo código antigo sem avisar. O `tsconfig` agora sonda arquivos
-(`watchOptions`), o que resolve o caso normal.
-
-### Produção — Railway (API) + Vercel (frontend)
-
-A infraestrutura já está provisionada no Railway (projeto `gallant-charisma`):
-serviços **ticket-to-ride** (API), **Postgres** e **Redis**, no ambiente `production`.
-
-**API:** https://ticket-to-ride-production-ebbe.up.railway.app — **no ar** ✅
-
-```
-GET /health → {"status":"healthy","dependencies":{"database":{"status":"up"},"redis":{"status":"up"}}}
-```
-
-Verificado em produção: 16 eventos semeados (6015 assentos), login dos três papéis,
-catálogo do Ticketmaster (140 eventos no Brasil), filmes em cartaz do TMDb (134) e a
-agenda da portaria com o evento ao vivo aberto para entrada.
-
-> **Falta apenas o frontend.** Depois de subir na Vercel, atualize `CORS_ORIGIN` no
-> Railway para a URL da Vercel — enquanto estiver em `http://localhost:5173`, o
-> navegador bloqueia as chamadas do site publicado.
-
-#### 1. Variáveis do backend (Railway)
-
-As variáveis não-secretas já estão configuradas (`NODE_ENV`, `DB_SYNCHRONIZE`,
-`RUN_SEED_ON_BOOT`, `CORS_ORIGIN`, `REDIS_URL`). Faltam **apenas os segredos**, que
-precisam ser colados por você no painel — em *Variables → Raw Editor* do serviço
-`ticket-to-ride`:
-
-```
-DATABASE_URL=postgresql://ticket:SENHA_DO_POSTGRES@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/ticket_to_ride
-JWT_SECRET=<32+ caracteres aleatórios>
-TICKET_SIGNING_SECRET=<32+ caracteres aleatórios>
-TICKETMASTER_API_KEY=<sua chave>
-TMDB_API_KEY=<sua chave>
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-```
-
-> `SENHA_DO_POSTGRES` é o valor de `POSTGRES_PASSWORD` no serviço **Postgres**.
-> `${{Postgres.RAILWAY_PRIVATE_DOMAIN}}` é referência do próprio Railway — cole literalmente.
-
-Gerar segredos fortes:
-
-```bash
-node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
-```
-
-#### 2. Primeiro boot
-
-Duas flags existem para o **primeiro** deploy num banco vazio:
-
-| Variável | O que faz |
+| Variável | Por quê |
 |---|---|
-| `DB_SYNCHRONIZE=true` | Cria o schema a partir das entidades. O projeto ainda não tem migrations; sem isso, o banco sobe sem nenhuma tabela. |
-| `RUN_SEED_ON_BOOT=true` | Roda o seed no startup. A imagem de produção só tem `dist/`, então `npm run seed` (ts-node sobre `src/`) não existe lá. |
-| `PORT=3000` | O Railway injeta `PORT=8080` por padrão, mas o domínio foi criado apontando para 3000. Fixar aqui evita a API subir saudável e o domínio devolver 502. |
+| `CORS_ORIGIN` | A URL da Vercel. Aceita lista separada por vírgula, para os domínios de preview |
+| `PORT=3000` | O Railway injeta 8080 por padrão, mas o domínio foi criado apontando para 3000 |
+| `DB_SYNCHRONIZE=true` | Cria o schema no boot — não há migrations |
+| `RUN_SEED_ON_BOOT=true` | A imagem de produção só tem `dist/`, então `npm run seed` (ts-node sobre `src/`) não existe lá |
+| `GOOGLE_CALLBACK_URL` | O endereço precisa estar **também** registrado no Google Cloud Console, idêntico |
 
-O seed é idempotente — sai na hora se já existir usuário. Depois do primeiro boot
-bem-sucedido, o recomendado é desligar `DB_SYNCHRONIZE` (ver *Limitações*).
-
-#### 2b. Login com Google — o passo que não está no código
-
-O endereço de retorno do Google precisa existir **nos dois lados**:
-
-| Onde | Valor |
-|---|---|
-| Railway (`GOOGLE_CALLBACK_URL`) | `https://<sua-api>.up.railway.app/auth/google/callback` |
-| Google Cloud Console → *Credenciais* → seu OAuth Client → **URIs de redirecionamento autorizados** | o mesmo endereço, idêntico |
-
-Se faltar no Railway, a API agora deriva o endereço do domínio público e registra
-aviso no boot — antes ela mandava o usuário para uma tela do Google dizendo
-*"Missing required parameter: redirect_uri"*, um erro nosso com cara de erro deles.
-
-Se faltar no Google Console, o erro é `redirect_uri_mismatch`. Esse só se resolve
-lá: é o Google conferindo se o endereço foi autorizado por quem é dono do app.
-Mantenha também `http://localhost:3000/auth/google/callback` na lista, para o
-desenvolvimento local continuar funcionando.
-
-#### 3. Frontend (Vercel)
-
-O repositório já traz `frontend/vercel.json` (framework, build e o rewrite de SPA — sem
-ele, recarregar em `/events` daria 404) e `frontend/.env.production` com a URL da API.
-
-1. Vercel → **Add New → Project** → importe `Lauiskk/ticket-to-ride`
-2. **Root Directory:** `frontend`
-3. Em *Environment Variables*, adicione **apenas** a chave publicável da Stripe:
-   `VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...`
-   (sem ela o checkout cai no modo simulado, que ainda fecha o fluxo)
-
-   > ⚠️ **Não crie `VITE_API_URL` na Vercel.** As variáveis do painel sobrescrevem
-   > o `.env.production` do repositório. No primeiro deploy ela foi criada com o
-   > valor `teste`, e todas as chamadas viraram `https://<site>/teste/events` —
-   > que o rewrite de SPA respondia com o `index.html`, HTTP 200. A tela ficava
-   > vazia sem nenhum erro visível. Se ela existir, **apague e redeploy**.
-4. Deploy
-
-#### 4. Fechar o circuito
-
-Depois que a Vercel devolver a URL, atualize no Railway:
-
-```
-CORS_ORIGIN=https://<seu-projeto>.vercel.app
-```
-
-#### Webhook da Stripe — já criado ✅
-
-Endpoint `we_1U3d2O80lOSI3x5bjApaGFZI`, ativo, apontando para
-`https://ticket-to-ride-production-ebbe.up.railway.app/payments/webhook`,
-ouvindo `payment_intent.succeeded` e `payment_intent.payment_failed`. O
-`STRIPE_WEBHOOK_SECRET` correspondente já está no Railway.
-
-> **Não fixe `api_version` ao criar o endpoint.** A conta está em
-> `2026-07-29.dahlia`; passar `api_version=2024-06-20` devolve
-> `Invalid request (check your POST parameters)` sem dizer qual parâmetro.
-
-Validado em produção: cartão `4242…` → webhook entregue (`pending_webhooks: 0`)
-→ reserva `paid` → ingresso com QR emitido. Cartão `chargeDeclined` → assento de
-volta para `available`.
-
-#### 5. CI/CD
-
-`.github/workflows/ci.yml` roda a cada push e PR: testes + build do backend, typecheck
-+ build do frontend, e build da imagem Docker. `deploy.yml` só dispara **depois do CI
-verde** em `main`, e pula com aviso quando os tokens não existem — um fork não recebe
-pipeline vermelho por infraestrutura que não é dele.
-
-Para ligar o deploy automático, cadastre os secrets no repositório:
-
-```bash
-gh secret set RAILWAY_TOKEN      # railway tokens create
-gh secret set VERCEL_TOKEN       # vercel.com/account/tokens
-gh secret set VERCEL_ORG_ID      # frontend/.vercel/project.json após `vercel link`
-gh secret set VERCEL_PROJECT_ID  # idem
-```
+Na Vercel, *Root Directory* = `frontend`. A única variável a criar lá é
+`VITE_STRIPE_PUBLISHABLE_KEY`. **Não crie `VITE_API_URL` no painel** — as
+variáveis do painel sobrescrevem o `.env.production` do repositório, e no
+primeiro deploy ela foi criada com o valor `teste`: todas as chamadas viraram
+`https://<site>/teste/events`, que o rewrite de SPA respondia com o `index.html`,
+HTTP 200. A tela ficava vazia sem nenhum erro visível.
 
 ---
 
-## Limitações conhecidas
+## O que não está como deveria
 
-> O enunciado pede que o que não funciona como esperado esteja escrito. Está aqui.
+O enunciado pede que o que não funciona como esperado esteja escrito. Está aqui,
+incluindo o que eu deixei passar de propósito.
 
-### Precisa de ação manual
-
-| O quê | Por quê | Como resolver |
-|---|---|---|
-| Segredos do Railway | Foram deixados de fora de propósito — chave da Stripe e segredos de assinatura não devem trafegar por automação de terceiros | Colar no *Raw Editor* conforme a seção de Deploy |
-| Projeto na Vercel | O deploy por arquivo não permite definir variáveis de build; a integração com o GitHub dá deploy contínuo, que é melhor | Importar o repo apontando *Root Directory* para `frontend` |
-| Webhook da Stripe | A URL de produção só existe depois do deploy | Cadastrar no painel da Stripe |
-
-### Limitações técnicas assumidas
+### Limitações assumidas
 
 | Item | Situação | O que seria o certo |
 |---|---|---|
-| `DB_SYNCHRONIZE` | Cria o schema a partir das entidades. Não há migrations. | Migrations versionadas; `synchronize` pode perder dados ao alterar uma entidade |
-| Postgres e Redis no Railway | Containers `postgres:16-alpine` e `redis:7-alpine` **sem volume** | Um redeploy zera o banco. Como `RUN_SEED_ON_BOOT` está ligado, ele se recria sozinho — mas ingressos comprados somem. Para valer: anexar volume ou usar o Postgres gerenciado |
-| Estorno ao cancelar evento | **Implementado** (CP23): assentos voltam, ingressos são invalidados e a Stripe estorna | O estorno roda **depois** do commit do cancelamento. Se a Stripe estiver fora, sobra reserva paga de evento cancelado — registrada em log, reprocessável, não silenciosa |
-| Token do OAuth na URL | O callback já não leva token nem usuário na query string; a sessão vai no cookie | O ideal seria código de uso único trocado por sessão num POST — redesenho do handshake, fora do escopo desta entrega |
-| Dependências | 3 avisos `high` em pacotes de produção, nenhum alcançável por esta superfície | Migrar para o Nest 11. Justificativa item a item em `SDD/05-seguranca/DEPENDENCIAS.md` |
-| Scheduler de expiração | `setInterval` de 30 s no processo | `@nestjs/schedule`; com múltiplas réplicas hoje rodaria em todas |
-| QR no banco | PNG em base64 na coluna | Guardar em bucket e salvar a URL |
-| Meia-entrada | Declaração + documento conferido na portaria | Upload de comprovante com moderação, se o rigor exigir |
-| 2FA / OTP / magic link | Só o TOTP (2FA) está implementado | OTP por SMS/WhatsApp e magic link exigem provedor de envio |
-| OAuth | Só Google | Apple exige conta paga de desenvolvedor |
+| **Migrations** | Não existem. O schema nasce do `synchronize` do TypeORM no boot | Migrations versionadas. `synchronize` pode perder dados ao alterar uma entidade, e não serve para um banco com histórico |
+| **Sessão de 15 minutos** | `POST /auth/refresh` exige um token ainda válido, então depois de expirado não há renovação. Quem deixa a aba aberta e volta meia hora depois cai no login | Cookie de refresh próprio, com rotação. Não fiz a dias da entrega porque mexer em autenticação no fim é onde se quebra o que já funciona |
+| **Postgres sem volume no Railway** | Um redeploy do banco zera os dados. O seed se recria sozinho, mas ingressos comprados somem | Anexar volume ao serviço, ou usar Postgres gerenciado |
+| **Contagem de disponíveis na vitrine** | O card tem lugar para "N disponíveis", mas a listagem não calcula o número — só o detalhe calcula. O selo simplesmente não aparece | Calcular na listagem, com uma agregação só para a página inteira |
+| **Limite de requisições em memória** | Com mais de uma réplica, cada uma conta a sua parte | Apoiar o `throttler` no Redis, que já está no projeto |
+| **Expiração de reserva por `setInterval`** | Roda no processo, a cada 30 s. Com várias réplicas, roda em todas | `@nestjs/schedule` com lock, ou um job externo |
+| **QR guardado como base64 no banco** | Infla a linha do ingresso | Guardar em bucket e salvar a URL |
+| **Meia-entrada por declaração** | O comprador declara categoria e documento; a conferência é humana, na portaria | Upload de comprovante com moderação, se o rigor exigir |
+| **Dependências** | 3 avisos `high` em pacotes de produção, nenhum alcançável por esta superfície | Migrar para o Nest 11. Justificativa item a item em [`SDD/05-seguranca/DEPENDENCIAS.md`](SDD/05-seguranca/DEPENDENCIAS.md) |
+| **2FA/OAuth** | Só TOTP e só Google | SMS e magic link exigem provedor de envio; Apple exige conta paga |
 
-### Armadilha resolvida — vale saber
+### Três defeitos que os testes não pegaram
+
+Ficam registrados porque a lição vale mais que a correção — e porque os dois
+últimos **só apareceram no site publicado**, não em desenvolvimento.
+
+**A cota de meia-entrada era furável.** O código contava ingressos emitidos para
+saber quantas meias já tinham saído. Só que um comprador em checkout ainda não
+tem ingresso: dois simultâneos estouravam a cota. Hoje a contagem inclui as
+declarações das reservas pendentes.
+
+**Toda mutação em produção respondia 403.** A proteção de CSRF usa um cookie
+legível pelo JavaScript. Esse cookie pertence ao domínio da API
+(`up.railway.app`) e o site roda em `vercel.app` — `document.cookie` de um
+domínio nunca enxerga cookie do outro. O navegador anexava o cookie, a sessão
+funcionava, mas o site não conseguia montar o header, e ninguém conseguia
+comprar. Local passava porque o Vite faz proxy e a diferença de domínio não
+existe ali: **os 13 testes de CSRF estavam certos e o sistema estava quebrado.**
+
+**Quem voltasse ao checkout não conseguia mais pagar.** Pedindo o pagamento uma
+segunda vez para a mesma reserva, a API devolvia um `clientSecret` inventado, que
+o Stripe.js recusa. Reservar, fechar a aba e voltar deixava a pessoa com um
+checkout que não abre e assentos presos até expirar. A suíte nunca abria o mesmo
+checkout duas vezes; uma pessoa distraída faz isso o tempo todo.
+
+### Uma armadilha que vale saber
 
 `PaymentController` e `StripeWebhookController` moram os dois em `payments`, e o
 primeiro declara `POST :reservationId`. Registrado antes, ele engolia
 `POST /payments/webhook` como `reservationId = "webhook"` — rota exclusiva de
-cliente — e a Stripe recebia **401**. O `@Public()` do webhook nunca era
-consultado, e o `ParseUUIDPipe` nunca chegava a rejeitar `"webhook"` porque
-guards rodam antes de pipes.
+cliente — e a Stripe recebia **401**. Pior: o sintoma era invisível, porque o
+checkout consulta o status e reconcilia direto com a Stripe. A aplicação parecia
+saudável enquanto **toda** entrega de webhook falhava. A ordem no
+`payment.module.ts` agora está travada por teste (`payment.routing.spec.ts`).
 
-Pior: o sintoma era invisível. O pagamento fechava mesmo assim, porque o modal de
-checkout consulta `/payments/:id/status`, que reconcilia direto com a Stripe. A
-aplicação parecia saudável enquanto **toda** entrega de webhook falhava.
+### Verificado funcionando
 
-A ordem em `payment.module.ts` agora é obrigatória e está travada por teste
-(`payment.routing.spec.ts`).
+Pagamento na Stripe (`4242…` aprova, `4000…0002` recusa) com webhook emitindo o
+ingresso · assentos atualizando ao vivo · portaria devolvendo válido / já
+utilizado / evento errado / fora do horário / evento cancelado · meia-entrada
+com cota transacional e documento mascarado · catálogo trazendo shows e filmes
+reais · compartilhamento entre duas contas, com o ingresso de quem enviou
+invalidado · cancelamento devolvendo 6 de 6 assentos, invalidando ingressos e
+estornando na Stripe · sessão em cookie com `localStorage` vazio · mutação sem
+token de CSRF recusada com 403 · 6º cadastro no mesmo minuto recusado com 429.
 
-### Duas armadilhas que só existem em produção
-
-Ambas passavam em 160 testes e apareceram abrindo o **site publicado**. Ficam
-registradas porque a lição vale mais que a correção.
-
-**Cookie de CSRF que o site não alcança.** A proteção usa um cookie legível pelo
-JavaScript, mas ele pertence ao domínio da API (`up.railway.app`) e o site roda
-em `vercel.app` — `document.cookie` de um domínio nunca enxerga cookie do outro.
-O navegador anexava o cookie (a sessão funcionava), o site não conseguia montar o
-header, e **toda mutação respondia 403**. Local não pega: o Vite faz proxy e a
-diferença de domínio some. O token passou a viajar também no corpo da resposta de
-autenticação.
-
-**Checkout reaberto que nunca mais paga.** Pedindo o pagamento de novo para a
-mesma reserva, a API devolvia `clientSecret: "reuse_pi_…"` — string inventada que
-o Stripe.js recusa. Reservar, fechar a aba e voltar deixava a pessoa com um
-checkout que não abre e assentos presos até expirar. Agora o intent é buscado na
-Stripe e o `client_secret` real é devolvido.
-
-### Verificado e funcionando
-
-Pagamento real na Stripe (`4242…` aprova, `4000…0002` recusa) com webhook emitindo o
-ingresso · assentos atualizando ao vivo por WebSocket · portaria devolvendo válido /
-já utilizado / evento errado / fora do horário · meia-entrada com cota transacional e
-documento mascarado · catálogo trazendo 56 shows no Brasil e 135 filmes em cartaz ·
-**compartilhamento entre duas contas** (cliente A envia, cliente B recebe, o de A é
-invalidado) · **cancelamento devolvendo 6 de 6 assentos**, invalidando o ingresso,
-estornando na Stripe e fechando o portão · sessão em cookie `httpOnly` com
-`localStorage` vazio · mutação sem token de CSRF recusada com 403 · 6º cadastro no
-mesmo minuto recusado com 429.
-
-Cada uma dessas linhas tem a medição correspondente em `docs/plan/SPEC_CP*.md`.
+Cada uma dessas linhas tem a medição correspondente na spec do checkpoint
+correspondente, em [`docs/plan/`](docs/plan/).
 
 ---
 
-## Tradeoffs e Limitações
-
-| Item | Decisão | Trade-off aceito |
-|------|---------|-----------------|
-| `synchronize: true` | Usado em dev para auto-criar tabelas | Em produção, usar migrations |
-| Reservation scheduler | `setInterval` 30s | Em produção, usar @nestjs/schedule com Cron |
-| QR como data URL | Base64 no banco | Em produção, salvar PNG em S3/bucket |
-| Limite de falhas de login | Contagem em Redis | Se o Redis cai, o limitador falha **aberto**: prefere deixar todo mundo entrar a trancar todo mundo fora |
-| Limite geral de requisições | `@nestjs/throttler` em memória | Com múltiplas réplicas, cada uma conta a sua parte; para valer, apoiar em Redis |
-| Geo-sort | Haversine em SQL | Para volume alto, considerar PostGIS |
-| Auth próprio | Full control | Mais código para manter vs auth provider |
-| Token blacklist | Fail-open | Token revogado pode funcionar até 15min se Redis cair |
-| Sessão em cookie cross-site | `sameSite: 'none'` + `secure`, obrigatório entre Vercel e Railway | O SameSite deixa de proteger contra CSRF; a defesa passa a ser explícita (dupla submissão + corpo só JSON + CORS fechado) |
-
----
-
-## Estrutura de Pastas
+## Estrutura do repositório
 
 ```
-Ticket to ride project/
-├── docker-compose.yml       (PostgreSQL + Redis + API)
-├── README.md                (este arquivo)
-└── backend/
-    ├── package.json
-    ├── tsconfig.json         (strict mode, @shared/* alias)
-    ├── Dockerfile            (multi-stage: dev + production)
-    ├── .env.example          (todas as variáveis documentadas)
+.
+├── docker-compose.yml        Postgres + Redis + API
+├── AGENTS.md, CLAUDE.md      Regras e contrato de trabalho seguidos no projeto
+├── .claude/                  Configuração do agente, versionada
+├── docs/
+│   ├── IA.md                 Uso de IA: ferramentas, onde, e o que foi sem IA
+│   ├── plan/                 12 specs, com critérios de aceitação e evidência
+│   └── templates/
+├── SDD/                      Documentação de sistema (05-seguranca traz o modelo de ameaças)
+├── backend/
+│   ├── Dockerfile            Multi-stage: base (dev) e produção
+│   └── src/
+│       ├── main.ts           Bootstrap: helmet, CORS, cookie-parser, corpo cru da Stripe
+│       ├── app.module.ts     Módulos e guards globais
+│       ├── shared/           Erros, filtro, guards, interceptors, decorators, config
+│       ├── auth/  event/  reservation/  payment/  ticket/  gate/  sharing/
+│       ├── user/  audit/
+│       └── seed/             4 usuários, 16 eventos, ~6.000 assentos
+└── frontend/
+    ├── vercel.json           Build e rewrite de SPA
     └── src/
-        ├── main.ts           (bootstrap com helmet, compression, CORS, cookie-parser)
-        ├── app.module.ts     (registra todos os módulos + global guards)
-        ├── shared/           (errors, filters, interceptors, guards, decorators, pipes, config)
-        ├── auth/             (JWT, Argon2id, 2FA, blacklist, rate-limit)
-        ├── user/             (entity)
-        ├── event/            (CRUD, catalog Ticketmaster/TMDb, entities)
-        ├── reservation/      (pessimistic lock, WebSocket, scheduler)
-        ├── payment/          (Stripe, webhooks)
-        ├── ticket/           (HMAC signing, QR generation)
-        ├── gate/             (validation)
-        ├── sharing/          (link generation, transfer)
-        ├── audit/            (entity — logging service TODO)
-        └── seed/             (4 users + 1 event + 250 seats)
+        ├── pages/            Vitrine, evento, checkout, ingressos, portaria, organizador
+        ├── components/       Mapa de assentos, modal de pagamento, assistente de evento
+        ├── context/          Sessão e avisos
+        ├── hooks/            WebSocket de assentos e de ingressos
+        └── lib/              Cliente HTTP, higienização, rotas por papel
 ```

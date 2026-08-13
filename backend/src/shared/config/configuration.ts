@@ -8,7 +8,6 @@ import * as Joi from 'joi';
  * IMPORTANT: Never log environment variable VALUES — only reference by key name.
  */
 export const envValidationSchema = Joi.object({
-  // ─── Required ───────────────────────────────────────────────────────
   DATABASE_URL: Joi.string().uri().required().description(
     'PostgreSQL connection string (e.g. postgres://user:pass@localhost:5432/ticketdb)',
   ),
@@ -30,8 +29,6 @@ export const envValidationSchema = Joi.object({
   STRIPE_WEBHOOK_SECRET: Joi.string().required().description(
     'Stripe webhook endpoint signing secret (whsec_...)',
   ),
-
-  // ─── Optional (with defaults) ──────────────────────────────────────
   PORT: Joi.number().default(3000).description(
     'Port the API listens on',
   ),

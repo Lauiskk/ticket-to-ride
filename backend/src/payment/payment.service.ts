@@ -12,15 +12,11 @@ import { TicketService } from '../ticket/ticket.service';
 import { ReservationGateway } from '../reservation/reservation.gateway';
 
 /**
- * Payment service — Stripe test mode integration.
+ * Cobrança na Stripe em modo de teste.
  *
- * Key behaviors:
- * - Creates Stripe PaymentIntent for reservation total (Req 8.1)
- * - On success → reservation "paid", trigger ticket generation (Req 8.2)
- * - On failure → reservation "payment_failed", release seats (Req 8.3)
- * - Webhook idempotency: duplicate webhook returns 200, no reprocessing (Req 8.5)
- * - Logs all state transitions to audit (Req 8.6)
- * - Simulated mode: if Stripe key is not a real test key, bypasses Stripe API
+ * A confirmação nunca vem do navegador: quem move a reserva para `paid` é o
+ * webhook ou a reconciliação contra a própria Stripe. Sem chave configurada, o
+ * serviço entra em modo simulado e fecha o fluxo sem rede.
  */
 @Injectable()
 export class PaymentService {
@@ -44,18 +40,11 @@ export class PaymentService {
     );
   }
 
-  // ─── Create Payment Intent ────────────────────────────────────────────────
-
-  /**
-   * Creates a Stripe PaymentIntent for a pending reservation.
-   * If the Stripe key is not a real test key, runs in simulated mode
-   * (skips Stripe API, marks payment as succeeded immediately).
-   */
+  /** Abre a cobrança de uma reserva pendente. */
   async createPaymentIntent(userId: string, reservationId: string): Promise<{
     clientSecret: string;
     paymentId: string;
   }> {
-    // Find reservation and validate ownership
     const reservation = await this.reservationRepo.findOne({
       where: { id: reservationId, userId },
     });
@@ -72,7 +61,6 @@ export class PaymentService {
       );
     }
 
-    // Check if reservation has expired
     if (reservation.expiresAt <= new Date()) {
       throw new AppError(
         'Reservation has expired. Please create a new one.',
@@ -81,18 +69,9 @@ export class PaymentService {
       );
     }
 
-    /*
-      Já existe uma cobrança em aberto para esta reserva (B21).
-
-      Aqui devolvíamos `clientSecret: "reuse_<id>"` — uma string inventada, que
-      não é segredo de cliente nenhum. O Stripe.js recusa de imediato, e o
-      resultado prático é cruel: quem reserva, fecha a aba e volta para pagar
-      **nunca mais consegue**, com os assentos presos até expirar. Achado
-      abrindo o checkout duas vezes na aplicação publicada.
-
-      O certo é buscar o intent na Stripe e devolver o `client_secret` de
-      verdade — o mesmo intent, sem cobrar duas vezes.
-    */
+    // Cobrança já aberta: buscar o intent na Stripe e devolver o `client_secret`
+    // real. Devolvíamos uma string inventada, que o Stripe.js recusa — quem
+    // reservava, fechava a aba e voltava para pagar nunca mais conseguia (B21).
     const existing = await this.paymentRepo.findOne({
       where: { reservationId },
     });
@@ -104,14 +83,13 @@ export class PaymentService {
           );
           return { clientSecret: intent.client_secret, paymentId: existing.id };
         } catch (error) {
-          // Intent sumiu do lado da Stripe (chave trocada, ambiente limpo).
-          // Seguir adiante e criar outro é melhor do que travar a compra.
+          // Intent sumiu da Stripe (chave trocada, ambiente limpo): criar outro
+          // é melhor do que travar a compra.
           this.logger.warn(
             `PaymentIntent ${existing.stripePaymentIntentId} não encontrado na Stripe; criando outro para a reserva ${reservationId}`,
           );
         }
       } else {
-        // Modo simulado: não há Stripe do outro lado para consultar
         return {
           clientSecret: `simulated_${existing.stripePaymentIntentId}`,
           paymentId: existing.id,
@@ -119,14 +97,11 @@ export class PaymentService {
       }
     }
 
-    // Detect simulated mode (no usable Stripe key configured)
     const isSimulated = !this.hasRealStripeKey();
 
     if (isSimulated) {
-      // ─── Simulated Mode: skip Stripe API entirely ───────────────────────
       this.logger.log(`Simulated mode — skipping Stripe API for reservation ${reservationId}`);
 
-      // Create payment record with SUCCEEDED status directly
       const payment = this.paymentRepo.create({
         reservationId,
         userId,
@@ -139,12 +114,10 @@ export class PaymentService {
 
       const saved = await this.paymentRepo.save(payment);
 
-      // Transition reservation to PAID
       await this.reservationRepo.update(reservationId, {
         status: ReservationStatus.PAID,
       });
 
-      // Mark seats as SOLD
       const fullReservation = await this.reservationRepo.findOne({
         where: { id: reservationId },
         relations: ['seats'],
@@ -162,7 +135,6 @@ export class PaymentService {
         }
       }
 
-      // Generate tickets
       try {
         await this.ticketService.generateForReservation(reservationId);
       } catch (err) {
@@ -179,8 +151,6 @@ export class PaymentService {
       };
     }
 
-    // ─── Real Stripe Mode ─────────────────────────────────────────────────
-
     // Create Stripe PaymentIntent
     const amount = Math.round(Number(reservation.totalAmount) * 100); // Stripe uses cents
     const paymentIntent = await this.stripe.paymentIntents.create({
@@ -192,7 +162,6 @@ export class PaymentService {
       },
     });
 
-    // Save payment record
     const payment = this.paymentRepo.create({
       reservationId,
       userId,
@@ -211,17 +180,11 @@ export class PaymentService {
     };
   }
 
-  // ─── Handle Webhook Events ────────────────────────────────────────────────
-
   /**
-   * Simulated-mode confirmation: manually mark a payment as succeeded.
-   *
-   * Only available when there is NO real Stripe key configured (SPEC_CP10 RF-5).
-   * With a `sk_test_*` key the Stripe webhook is the single source of truth, so
-   * this shortcut would let a client mint tickets without ever paying.
+   * Confirmação manual, só no modo simulado (SPEC_CP10 RF-5). Com chave
+   * `sk_test_*` este atalho deixaria o cliente emitir ingresso sem pagar.
    */
   async confirmTestPayment(userId: string, reservationId: string): Promise<{ success: boolean; ticketCount: number }> {
-    // Find the payment for this reservation
     const payment = await this.paymentRepo.findOne({
       where: { reservationId, userId },
     });
@@ -230,13 +193,12 @@ export class PaymentService {
       throw new AppError('Payment not found', ErrorCodes.NOT_FOUND, 404);
     }
 
-    // Idempotency: if already succeeded, return success
     if (payment.status === PaymentStatus.SUCCEEDED) {
       const ticketCount = await this.countTickets(reservationId);
       return { success: true, ticketCount };
     }
 
-    // With a real Stripe key, only the webhook may confirm a payment (RF-5)
+    // Com chave real, só o webhook confirma pagamento (SPEC_CP10 RF-5)
     if (this.hasRealStripeKey()) {
       throw new AppError(
         'Confirmação manual indisponível: o pagamento é confirmado pela Stripe.',
@@ -249,17 +211,14 @@ export class PaymentService {
       throw new AppError('Payment cannot be confirmed in current state', ErrorCodes.BAD_REQUEST, 400);
     }
 
-    // Mark payment as succeeded
     payment.status = PaymentStatus.SUCCEEDED;
     payment.stripeStatus = 'succeeded';
     await this.paymentRepo.save(payment);
 
-    // Transition reservation to PAID
     await this.reservationRepo.update(reservationId, {
       status: ReservationStatus.PAID,
     });
 
-    // Mark seats as SOLD
     const reservation = await this.reservationRepo.findOne({
       where: { id: reservationId },
       relations: ['seats'],
@@ -277,7 +236,6 @@ export class PaymentService {
       }
     }
 
-    // Generate tickets
     let ticketCount = 0;
     try {
       const tickets = await this.ticketService.generateForReservation(reservationId);
@@ -292,25 +250,16 @@ export class PaymentService {
     return { success: true, ticketCount };
   }
 
-  /**
-   * How many tickets already exist for this reservation (SPEC_CP10 AC-6).
-   * Used on idempotent re-confirmation so the client gets the real number.
-   */
   private async countTickets(reservationId: string): Promise<number> {
     return this.ticketService.countForReservation(reservationId);
   }
 
-  // ─── Payment Status (polling + reconciliation) ────────────────────────────
-
   /**
-   * Status of the payment of a reservation, for the checkout modal to poll
-   * while the Stripe webhook lands (SPEC_CP10 RF-3).
+   * Estado da cobrança, consultado pelo checkout enquanto o webhook não chega.
    *
-   * Also acts as a reconciliation path: if the local record is still pending but
-   * Stripe already settled the PaymentIntent, we apply the same transition the
-   * webhook would. This keeps the flow working when `stripe listen` is not
-   * running locally, without ever trusting the client about the outcome —
-   * the source of truth is always Stripe, never the browser.
+   * Também reconcilia: se o registro local ainda está pendente mas a Stripe já
+   * liquidou o intent, aplica a mesma transição que o webhook aplicaria. A fonte
+   * de verdade continua sendo a Stripe, nunca o navegador (SPEC_CP10 RF-3).
    */
   async getPaymentStatus(
     userId: string,
@@ -333,12 +282,9 @@ export class PaymentService {
 
     let ticketCount = await this.countTickets(reservationId);
 
-    // Paid but no ticket: the generation failed after the money moved.
-    //
-    // Every call site wraps generateForReservation in a try/catch that only
-    // logs, so a failure left the buyer with a charge and an empty "Meus
-    // ingressos" and nobody the wiser. This is the repair pass — safe to run
-    // on every poll because it only fires when the count is zero.
+    // Pago e sem ingresso: a emissão falhou depois do dinheiro sair. Toda
+    // chamada a generateForReservation só loga o erro, então isso deixava o
+    // comprador com cobrança e lista vazia. Reparo barato — só dispara no zero.
     if (status === PaymentStatus.SUCCEEDED && ticketCount === 0) {
       ticketCount = await this.reissueMissingTickets(reservationId);
     }
@@ -352,10 +298,7 @@ export class PaymentService {
     };
   }
 
-  /**
-   * Generate tickets for a paid reservation that has none.
-   * Returns how many exist afterwards — 0 if the retry failed too.
-   */
+  /** Reemite o ingresso de uma reserva paga que ficou sem nenhum. */
   private async reissueMissingTickets(reservationId: string): Promise<number> {
     this.logger.warn(
       `Reservation ${reservationId} is paid with no tickets — reissuing.`,
@@ -372,10 +315,7 @@ export class PaymentService {
     return this.countTickets(reservationId);
   }
 
-  /**
-   * Ask Stripe for the real PaymentIntent state and apply the matching
-   * transition. Safe to call repeatedly — both handlers are idempotent.
-   */
+  /** Pergunta o estado real do intent à Stripe. Idempotente dos dois lados. */
   private async reconcileWithStripe(payment: Payment): Promise<void> {
     try {
       const intent = await this.stripe.paymentIntents.retrieve(
@@ -391,26 +331,20 @@ export class PaymentService {
         await this.handlePaymentFailure(payment.stripePaymentIntentId);
       }
     } catch (err) {
-      // Reconciliation is best-effort — the webhook remains the primary path
+      // Melhor esforço: o webhook continua sendo o caminho principal
       this.logger.warn(
         `Stripe reconciliation failed for payment ${payment.id}: ${err instanceof Error ? err.message : 'unknown'}`,
       );
     }
   }
 
-  /**
-   * True when a usable Stripe key is configured — in that case the webhook is
-   * the single source of truth and the simulated shortcuts are disabled.
-   */
+  /** Com chave real, o webhook é a única fonte de verdade e o modo simulado sai. */
   private hasRealStripeKey(): boolean {
     const key = this.configService.get<string>('stripe.secretKey') || '';
     return key.startsWith('sk_test_') || key.startsWith('sk_live_');
   }
 
-  /**
-   * Process a payment_intent.succeeded event.
-   * Idempotent: if already processed, returns without changes (Req 8.5).
-   */
+  /** `payment_intent.succeeded`. Idempotente: webhook repetido não reprocessa. */
   async handlePaymentSuccess(paymentIntentId: string): Promise<void> {
     const payment = await this.paymentRepo.findOne({
       where: { stripePaymentIntentId: paymentIntentId },
@@ -421,23 +355,19 @@ export class PaymentService {
       return;
     }
 
-    // Idempotency check (Req 8.5)
     if (payment.status === PaymentStatus.SUCCEEDED) {
       this.logger.debug(`Payment ${payment.id} already processed — skipping`);
       return;
     }
 
-    // Update payment status
     payment.status = PaymentStatus.SUCCEEDED;
     payment.stripeStatus = 'succeeded';
     await this.paymentRepo.save(payment);
 
-    // Transition reservation to "paid" (Req 8.2)
     await this.reservationRepo.update(payment.reservationId, {
       status: ReservationStatus.PAID,
     });
 
-    // Mark seats as "sold"
     const reservation = await this.reservationRepo.findOne({
       where: { id: payment.reservationId },
       relations: ['seats'],
@@ -459,7 +389,6 @@ export class PaymentService {
 
     this.logger.log(`Payment ${payment.id} succeeded — reservation ${payment.reservationId} → paid`);
 
-    // Trigger ticket generation (Req 8.2 → 9.1)
     try {
       await this.ticketService.generateForReservation(payment.reservationId);
     } catch (err) {
@@ -469,9 +398,7 @@ export class PaymentService {
     }
   }
 
-  /**
-   * Process a payment_intent.payment_failed event.
-   */
+  /** `payment_intent.payment_failed`: devolve os assentos ao mapa. */
   async handlePaymentFailure(paymentIntentId: string): Promise<void> {
     const payment = await this.paymentRepo.findOne({
       where: { stripePaymentIntentId: paymentIntentId },
@@ -479,20 +406,16 @@ export class PaymentService {
 
     if (!payment) return;
 
-    // Idempotency
     if (payment.status === PaymentStatus.FAILED) return;
 
-    // Update payment status
     payment.status = PaymentStatus.FAILED;
     payment.stripeStatus = 'failed';
     await this.paymentRepo.save(payment);
 
-    // Transition reservation to "payment_failed" (Req 8.3)
     await this.reservationRepo.update(payment.reservationId, {
       status: ReservationStatus.PAYMENT_FAILED,
     });
 
-    // Release seats back to available
     const reservation = await this.reservationRepo.findOne({
       where: { id: payment.reservationId },
       relations: ['seats'],
@@ -515,19 +438,12 @@ export class PaymentService {
     this.logger.log(`Payment ${payment.id} failed — reservation ${payment.reservationId} → payment_failed, seats released`);
   }
 
-  // ─── Estorno em massa por evento cancelado (SPEC_CP23 RF-3) ───────────────
-
   /**
    * Devolve o dinheiro de todas as reservas de um evento cancelado.
    *
-   * Roda **depois** do commit do cancelamento, de propósito: estorno é chamada
-   * de rede, e mantê-la dentro da transação significaria segurar bloqueios do
-   * banco durante a latência da Stripe — além de abrir a janela em que o
-   * dinheiro volta e o commit falha, deixando um estorno que ninguém registrou.
-   *
-   * Idempotente em dois níveis: a reserva já `refunded` é pulada, e cada
-   * chamada à Stripe leva uma `idempotencyKey` derivada da reserva, então
-   * repetir a operação não devolve dinheiro duas vezes.
+   * Roda depois do commit do cancelamento: estorno é chamada de rede, e mantê-la
+   * na transação seguraria bloqueios do banco durante a latência da Stripe.
+   * Idempotente por `idempotencyKey` derivada da reserva.
    */
   async refundReservationsForEvent(eventId: string): Promise<{
     refunded: number;
@@ -555,9 +471,7 @@ export class PaymentService {
         await this.refundPaidReservation(reservation);
         refunded += 1;
       } catch (error) {
-        // Uma falha não pode interromper as outras devoluções: cada reserva é
-        // independente, e parar no meio deixaria metade dos clientes sem
-        // dinheiro e sem registro.
+        // Parar no meio deixaria metade dos clientes sem dinheiro e sem registro
         failed += 1;
         this.logger.error(
           `Estorno falhou para a reserva ${reservation.id} do evento ${eventId}: ${
@@ -592,12 +506,7 @@ export class PaymentService {
     await this.reservationRepo.save(reservation);
   }
 
-  // ─── Webhook Signature Verification ───────────────────────────────────────
-
-  /**
-   * Verify Stripe webhook signature and parse event.
-   * Returns null if signature is invalid.
-   */
+  /** Confere a assinatura do webhook. `null` = não veio da Stripe. */
   verifyWebhookSignature(payload: Buffer, signature: string): any | null {
     const webhookSecret = this.configService.get<string>('stripe.webhookSecret') || '';
     try {

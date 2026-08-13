@@ -1,14 +1,8 @@
 /**
- * Input sanitization utilities (CyberAI security patterns).
- *
- * All user input is sanitized before being sent to the API.
- * Prevents XSS, script injection, and HTML injection on the frontend layer.
- * The backend also validates — this is defense in depth.
+ * Higienização de entrada antes de sair do navegador. O servidor valida de
+ * novo: isto é a camada de fora, não a única.
  */
 
-/**
- * Escapes HTML entities to prevent XSS.
- */
 export function escapeHtml(str: string): string {
   const map: Record<string, string> = {
     '&': '&amp;',

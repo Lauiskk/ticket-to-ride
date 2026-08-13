@@ -1,19 +1,9 @@
 /**
- * Standardized error response structure.
- * Replicates the Go project's CustomError pattern:
- * - message: human-readable error message
- * - code: machine-readable string constant (from ErrorCodes)
- * - statusCode: HTTP status code
- * - errors: optional array of field-level validation errors
- *
- * The GlobalExceptionFilter catches these and serializes them
- * into the standardized JSON response format.
+ * Erro de domínio: mensagem para quem lê, `code` para quem programa, status
+ * HTTP e, quando for validação, os erros por campo. O filtro global serializa.
  */
 
-// ─── Error Codes ──────────────────────────────────────────────────────────────
-
 export const ErrorCodes = {
-  // Generic
   BAD_REQUEST: 'BAD_REQUEST',
   NOT_FOUND: 'NOT_FOUND',
   UNAUTHORIZED: 'UNAUTHORIZED',
@@ -27,7 +17,6 @@ export const ErrorCodes = {
   /** Mutação sem o par cookie/header de CSRF (SPEC_CP20 RF-5). */
   CSRF_TOKEN_INVALID: 'CSRF_TOKEN_INVALID',
 
-  // Domain-specific
   SEAT_UNAVAILABLE: 'SEAT_UNAVAILABLE',
   STALE_UPDATE: 'STALE_UPDATE',
   TICKET_ALREADY_USED: 'TICKET_ALREADY_USED',
@@ -41,8 +30,6 @@ export const ErrorCodes = {
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
 
-// ─── Validation Error Detail ──────────────────────────────────────────────────
-
 export interface ValidationErrorDetail {
   field: string;
   message: string;
@@ -50,8 +37,6 @@ export interface ValidationErrorDetail {
   expected?: string;
   received?: string;
 }
-
-// ─── Base AppError ────────────────────────────────────────────────────────────
 
 export class AppError extends Error {
   public readonly code: ErrorCode;
@@ -70,17 +55,11 @@ export class AppError extends Error {
     this.statusCode = statusCode;
     this.errors = errors;
 
-    // Maintains proper stack trace in V8
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
-// ─── Domain-Specific Error Subclasses ─────────────────────────────────────────
-
-/**
- * Thrown when a seat is already reserved/sold and another client tries to lock it.
- * HTTP 409 — the request conflicts with the current resource state.
- */
+/** Assento já reservado ou vendido quando outro cliente tenta travá-lo. */
 export class SeatUnavailableError extends AppError {
   constructor(seatId?: string) {
     const msg = seatId
@@ -91,10 +70,7 @@ export class SeatUnavailableError extends AppError {
   }
 }
 
-/**
- * Thrown when an optimistic concurrency check fails (version mismatch).
- * HTTP 409 — the resource was modified by another request between read and write.
- */
+/** O recurso mudou entre a leitura e a escrita. */
 export class StaleUpdateError extends AppError {
   constructor(resource?: string) {
     const msg = resource
@@ -105,10 +81,7 @@ export class StaleUpdateError extends AppError {
   }
 }
 
-/**
- * Thrown when a ticket's HMAC signature is invalid or the payload is malformed.
- * HTTP 400 — the submitted data is not a valid ticket.
- */
+/** Assinatura HMAC inválida ou payload malformado: não é ingresso nosso. */
 export class TicketInvalidError extends AppError {
   constructor(reason?: string) {
     const msg = reason
@@ -120,10 +93,8 @@ export class TicketInvalidError extends AppError {
 }
 
 /**
- * Thrown when a gate operator tries to validate a ticket for an event
- * that hasn't started yet or has already ended (beyond grace period).
- * HTTP 400 — the event is not in its active validation window.
- * IMPORTANT: This does NOT change the ticket status (Req 11.7).
+ * Fora da janela de entrada. Não muda o status do ingresso: chegar cedo não
+ * pode queimar a entrada de ninguém.
  */
 export class EventNotActiveError extends AppError {
   constructor(eventId?: string) {
@@ -135,10 +106,7 @@ export class EventNotActiveError extends AppError {
   }
 }
 
-/**
- * Thrown when a sharing link has passed its 48-hour expiry window.
- * HTTP 410 — the resource is gone (expired).
- */
+/** Link de compartilhamento passou das 48 horas. */
 export class LinkExpiredError extends AppError {
   constructor() {
     super('This sharing link has expired', ErrorCodes.LINK_EXPIRED, 410);
@@ -146,11 +114,7 @@ export class LinkExpiredError extends AppError {
   }
 }
 
-/**
- * Thrown when a sharing link has already been used to transfer a ticket.
- * HTTP 410 — the resource is gone (consumed).
- * NOTE: This takes priority over LinkExpiredError when both conditions are true (Req 10.5).
- */
+/** Link já consumido. Tem prioridade sobre "expirado" quando valem os dois. */
 export class LinkAlreadyUsedError extends AppError {
   constructor() {
     super(
@@ -162,11 +126,7 @@ export class LinkAlreadyUsedError extends AppError {
   }
 }
 
-/**
- * Thrown when an external API (Ticketmaster, TMDb) fails, times out,
- * or returns empty results and no cache is available.
- * HTTP 503 — the upstream service is temporarily unavailable.
- */
+/** Ticketmaster ou TMDb fora do ar, lentos, ou vazios sem cache para servir. */
 export class ExternalServiceError extends AppError {
   constructor(service?: string) {
     const msg = service

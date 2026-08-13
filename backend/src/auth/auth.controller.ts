@@ -170,8 +170,6 @@ export class AuthController {
     };
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
-
   /**
    * Emite a sessão e devolve o token de CSRF para ir no corpo da resposta
    * (SPEC_CP20 RF-1, RF-5 e B20).
@@ -183,8 +181,6 @@ export class AuthController {
   private setTokenCookie(res: Response, token: string): string {
     return issueSessionCookies(res, token, process.env.NODE_ENV);
   }
-
-  // ─── Google OAuth ───────────────────────────────────────────────────────────
 
   @Public()
   @Get('google')

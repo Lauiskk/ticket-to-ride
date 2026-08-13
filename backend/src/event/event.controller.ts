@@ -27,8 +27,6 @@ import { JwtPayload } from '../auth/strategies/jwt.strategy';
 export class EventController {
   constructor(private readonly eventService: EventService) {}
 
-  // ─── Public endpoints ───────────────────────────────────────────────────────
-
   @Public()
   @Get()
   async browse(@Query() dto: SearchEventsDto) {
@@ -40,8 +38,6 @@ export class EventController {
   async getById(@Param('id', ParseUUIDPipe) id: string) {
     return this.eventService.getById(id);
   }
-
-  // ─── Organizer endpoints ────────────────────────────────────────────────────
 
   /**
    * Sales panel for one event (SPEC_CP12 RF-6). Owner-only; someone else's

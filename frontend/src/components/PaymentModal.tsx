@@ -53,8 +53,6 @@ function formatTime(totalSeconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-// ─── Shell ────────────────────────────────────────────────────────────────────
-
 export function PaymentModal(props: PaymentModalProps) {
   const isSimulated = props.clientSecret.startsWith('simulated_') || !stripePromise;
 
@@ -121,7 +119,6 @@ export function PaymentModal(props: PaymentModalProps) {
   );
 }
 
-
 /**
  * The reservation countdown, isolated on purpose.
  *
@@ -180,8 +177,6 @@ function Countdown({
 function remainingSeconds(expiresAt: string): number {
   return Math.max(Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000), 0);
 }
-
-// ─── Shared chrome ────────────────────────────────────────────────────────────
 
 function Header({
   state,
@@ -318,8 +313,6 @@ function ExpiredPanel({ onCancel }: { onCancel: () => void }) {
     </motion.div>
   );
 }
-
-// ─── Real Stripe checkout ─────────────────────────────────────────────────────
 
 function StripeCheckout({
   reservationId,
@@ -517,8 +510,6 @@ function StripeCheckout({
     </>
   );
 }
-
-// ─── Simulated checkout (no Stripe key configured) ────────────────────────────
 
 function SimulatedCheckout({
   reservationId,

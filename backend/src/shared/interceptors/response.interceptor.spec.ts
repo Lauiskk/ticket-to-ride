@@ -11,8 +11,6 @@ import { CallHandler, ExecutionContext } from '@nestjs/common';
  * - P33: Paginated Response Structure
  */
 
-// ─── Test Helpers ─────────────────────────────────────────────────────────────
-
 const mockExecutionContext = {} as ExecutionContext;
 
 function createCallHandler(data: unknown): CallHandler {
@@ -20,8 +18,6 @@ function createCallHandler(data: unknown): CallHandler {
     handle: () => of(data),
   };
 }
-
-// ─── Arbitraries ──────────────────────────────────────────────────────────────
 
 // Generate arbitrary non-paginated payloads (objects that do NOT match PaginatedResult shape)
 const nonPaginatedArb = fc.oneof(
@@ -63,8 +59,6 @@ const paginatedArb = fc.record({
   pageSize: fc.integer({ min: 1, max: 100 }),
 });
 
-// ─── Property 4: Response Passthrough (No Envelope) ─────────────────────────
-
 describe('ResponseInterceptor', () => {
   const interceptor = new ResponseInterceptor();
 
@@ -97,8 +91,6 @@ describe('ResponseInterceptor', () => {
         });
     });
   });
-
-  // ─── Property 33: Paginated Response Structure ────────────────────────────
 
   describe('Property 33: Paginated Response Structure', () => {
     it('PaginatedResult is wrapped in {data, meta: {total, page, pageSize, totalPages}}', (done) => {

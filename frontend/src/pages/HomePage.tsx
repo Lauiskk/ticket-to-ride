@@ -18,7 +18,7 @@ export function HomePage() {
 
   return (
     <div className="overflow-hidden">
-      {/* ─── Hero Section with Parallax ───────────────────────────────────── */}
+      {/* Hero Section with Parallax */}
       <section className="relative min-h-[90vh] flex items-center justify-center bg-board-navy overflow-hidden">
         {/* Parallax background layers — reduced speeds to avoid jank */}
         <Parallax speed={-8} className="absolute inset-0 will-change-transform">
@@ -98,7 +98,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ─── Eventos Perto de Você (Carousel) ────────────────────────────── */}
+      {/* Eventos Perto de Você (Carousel) */}
       {nearbyEvents && nearbyEvents.length > 0 && (
         <section className="py-12 px-4 bg-board-cream">
           <div className="max-w-7xl mx-auto">
@@ -150,7 +150,7 @@ export function HomePage() {
         </section>
       )}
 
-      {/* ─── Categories Section ──────────────────────────────────────────── */}
+      {/* Categories Section */}
       <section className="py-20 px-4 bg-board-cream">
         <div className="max-w-6xl mx-auto">
           <motion.h2
@@ -188,7 +188,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ─── Animated Stats Counter (replaces brown divider) ─────────────── */}
+      {/* Animated Stats Counter (replaces brown divider) */}
       <section className="py-16 bg-board-navy">
         <div className="max-w-4xl mx-auto grid grid-cols-3 gap-8 text-center px-4">
           {[
@@ -218,7 +218,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ─── How it Works ────────────────────────────────────────────────── */}
+      {/* How it Works */}
       <section className="py-20 px-4 bg-board-cream">
         <div className="max-w-6xl mx-auto">
           <motion.h2
@@ -256,7 +256,7 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ─── CTA Section ────────────────────────────────────────────────── */}
+      {/* CTA Section */}
       {!user && (
         <section className="py-24 bg-board-navy relative overflow-hidden">
           <div className="absolute inset-0">

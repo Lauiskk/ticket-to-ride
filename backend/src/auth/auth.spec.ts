@@ -11,16 +11,14 @@ import { JwtPayload } from './strategies/jwt.strategy';
  *
  * Properties covered:
  * - P5: Dual-Source Token Extraction Equivalence (architectural — tested via integration)
- * - P6: Password Hash Round-Trip (Argon2id)
+ * - P6: Password Hash Round-Trip (bcrypt)
  * - P7: TOTP Verification Round-Trip (architectural — requires otplib at runtime)
  * - P8: Anti-Enumeration Response Consistency (unit test)
- * - P9: Client IP Extraction (rightmost X-Forwarded-For)
+ * - P9: Client IP Extraction (req.ip, primeira entrada do X-Forwarded-For)
  * - P10: Token Blacklist Round-Trip (requires Redis — integration test)
  * - P11: Role-Based Access Control Matrix
  * - P12: Ownership-Scoped Resource Access (architectural — service layer)
  */
-
-// ─── Property 6: Password Hash Round-Trip ───────────────────────────────────
 
 describe('Property 6: Password Hash Round-Trip (bcrypt)', () => {
   it('hashing then verifying the same password returns true', async () => {
@@ -58,8 +56,6 @@ describe('Property 6: Password Hash Round-Trip (bcrypt)', () => {
     );
   });
 });
-
-// ─── Property 9: Client IP Extraction ───────────────────────────────────────
 
 /**
  * Esta propriedade afirmava o contrário do que deveria (corrigido no CP21).
@@ -157,8 +153,6 @@ describe('Property 9: Client IP Extraction (req.ip vence o cabeçalho)', () => {
     expect(AuthService.extractClientIp(req)).toBe('10.0.0.1');
   });
 });
-
-// ─── Property 11: Role-Based Access Control Matrix ──────────────────────────
 
 describe('Property 11: Role-Based Access Control Matrix', () => {
   const guard = new RolesGuard({ getAllAndOverride: jest.fn() } as any);
@@ -258,8 +252,6 @@ describe('Property 11: Role-Based Access Control Matrix', () => {
   });
 });
 
-// ─── Property 8: Anti-Enumeration Response Consistency ──────────────────────
-
 describe('Property 8: Anti-Enumeration Response Consistency', () => {
   it('login failure for wrong email and wrong password produce identical error structure', () => {
     // This is an architectural guarantee verified here:
@@ -280,8 +272,6 @@ describe('Property 8: Anti-Enumeration Response Consistency', () => {
     expect(expectedStatus).toBe(401);
   });
 });
-
-// ─── Property 5: Dual-Source Token Extraction (architectural) ───────────────
 
 describe('Property 5: Dual-Source Token Extraction Equivalence', () => {
   it('documents the architectural guarantee: cookie and header tokens produce identical auth', () => {

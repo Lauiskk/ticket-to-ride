@@ -155,7 +155,7 @@ describe('SeedService', () => {
       expect(roles.filter((r) => r === UserRole.CLIENT).length).toBe(2);
     });
 
-    it('creates users with Argon2id hashed passwords (not plaintext)', async () => {
+    it('cria usuários com senha hasheada, nunca em texto puro', async () => {
       userRepo.count.mockResolvedValue(0);
       const savedUsers: User[] = [];
       userRepo.create.mockImplementation((data) => ({ id: 'uuid', ...data }) as User);
@@ -169,19 +169,16 @@ describe('SeedService', () => {
 
       await seedService.run();
 
-      // All passwords must be hashed (Argon2id produces $argon2id$ prefix)
       for (const user of savedUsers) {
         expect(user.passwordHash).toBeDefined();
         expect(user.passwordHash).not.toBe('Organizer123!');
         expect(user.passwordHash).not.toBe('Client123!');
         expect(user.passwordHash).not.toBe('Gate123!');
-        // Bcrypt hash starts with $2a$ or $2b$
+        // bcrypt começa com $2a$ ou $2b$
         expect(user.passwordHash).toMatch(/^\$2[ab]\$/);
       }
     });
   });
-
-  // ─── SPEC_CP11 AC-5 ────────────────────────────────────────────────────────
 
   describe('AC-5: evento ao vivo para a portaria', () => {
     it('semeia exatamente 1 evento com a janela de entrada aberta agora', async () => {
@@ -209,8 +206,6 @@ describe('SeedService', () => {
       expect(openForEntry[0].title).toMatch(/ACONTECENDO AGORA/);
     });
   });
-
-  // ─── Catálogo externo no seed ──────────────────────────────────────────────
 
   describe('eventos vindos das APIs externas', () => {
     const catalogItem = (over: Record<string, unknown> = {}) => ({

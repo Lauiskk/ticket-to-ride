@@ -8,14 +8,8 @@ import { ReservationGateway } from '../reservation/reservation.gateway';
 import { AppError, ErrorCodes, TicketInvalidError, EventNotActiveError } from '../shared/errors';
 
 /**
- * Gate validation service (Req 11.1-11.7).
- *
- * Validation sequence:
- * 1. Verify HMAC signature → INVALID_TICKET if bad (Req 11.1, 11.2)
- * 2. Check ticket belongs to correct event → INVALID_TICKET (Req 11.6)
- * 3. Check event active window → EVENT_NOT_ACTIVE, ticket status UNCHANGED (Req 11.7)
- * 4. Check ticket not already used → TICKET_ALREADY_USED (Req 11.3, 11.4)
- * 5. Atomically mark as "used" (Req 11.5)
+ * Validação na entrada. A ordem importa: assinatura, evento certo, janela de
+ * entrada, ingresso ainda não usado — e só então a marcação atômica de uso.
  */
 
 export interface ValidationResult {
@@ -24,20 +18,17 @@ export interface ValidationResult {
   seatIdentifier: string;
   eventTitle?: string;
   validatedAt?: Date;
-  /** Half-price ticket — the operator must check the matching document (SPEC_CP12 RF-12). */
+  /** Meia-entrada: o operador precisa conferir o documento. */
   isHalfPrice?: boolean;
   halfPriceCategory?: string | null;
-  /** Masked on purpose: enough to compare, not enough to harvest. */
+  /** Mascarado de propósito: o bastante para comparar, não para copiar. */
   holderDocumentMasked?: string | null;
   error?: { code: string; message: string; firstValidatedAt?: Date };
 }
 
 /**
- * One line of the gate's own agenda (SPEC_CP11 RF-4).
- *
- * Deliberately not the public event DTO: a gate operator does not need price,
- * description or seat map — they need to know which door is open right now and
- * how the queue is going. No buyer data ever appears here.
+ * Uma linha da agenda da portaria. Não é o DTO público de propósito: quem está
+ * na porta não precisa de preço nem mapa, precisa saber que porta está aberta.
  */
 export interface GateEventSummary {
   id: string;
@@ -69,15 +60,12 @@ export class GateService {
     private readonly gateway: ReservationGateway,
   ) {}
 
-  /**
-   * Validate a ticket at the gate.
-   */
   async validateTicket(
     qrPayload: string,
     gateUserId: string,
     gateEventId: string,
   ): Promise<ValidationResult> {
-    // 1. Decode and verify HMAC signature (Req 11.1)
+    // Assinatura primeiro: nada é consultado antes de o QR provar que é nosso
     const decoded = this.signerService.decodeQrPayload(qrPayload);
     if (!decoded) {
       this.logInvalidAttempt(gateUserId, qrPayload);
@@ -92,7 +80,6 @@ export class GateService {
       throw new TicketInvalidError('Signature verification failed');
     }
 
-    // 2. Check ticket belongs to this event (Req 11.6)
     if (payload.eventId !== gateEventId) {
       throw new AppError(
         'This ticket is for a different event',
@@ -101,21 +88,15 @@ export class GateService {
       );
     }
 
-    // 3. Check event is in active window (Req 11.7)
     const event = await this.eventRepo.findOne({ where: { id: gateEventId } });
     if (!event) {
       throw new AppError('Event not found', ErrorCodes.NOT_FOUND, 404);
     }
 
-    /*
-      Evento cancelado não abre portão (SPEC_CP23 RF-4).
-
-      O cancelamento já invalida os ingressos, então esta checagem é a segunda
-      barreira — mas ela existe porque a primeira depende de uma escrita ter dado
-      certo, e um portão não é lugar para depender de uma coisa só. A mensagem é
-      própria: dizer "fora do horário" para quem chegou num evento cancelado
-      manda a pessoa esperar por algo que não vai acontecer.
-    */
+    // Segunda barreira: o cancelamento já invalida os ingressos, mas isso
+    // depende de uma escrita ter dado certo, e um portão não é lugar para
+    // depender de uma coisa só. Mensagem própria — dizer "fora do horário" a
+    // quem chegou num evento cancelado manda esperar pelo que não vai acontecer.
     if (event.status === EventStatus.CANCELLED) {
       throw new AppError(
         'Este evento foi cancelado. Nenhum ingresso dá entrada.',
@@ -125,11 +106,10 @@ export class GateService {
     }
 
     if (!this.isEventActive(event)) {
-      // CRITICAL (Req 11.7): Ticket status REMAINS UNCHANGED
+      // O status do ingresso NÃO muda: chegar cedo não queima a entrada
       throw new EventNotActiveError(event.id);
     }
 
-    // 4. Find ticket and check not already used (Req 11.3, 11.4)
     const ticket = await this.ticketRepo.findOne({
       where: { id: payload.ticketId },
     });
@@ -150,7 +130,7 @@ export class GateService {
       throw new TicketInvalidError('Ticket has been invalidated (transferred)');
     }
 
-    // 5. Atomically mark as "used" (Req 11.5)
+    // Marcação atômica: o mesmo QR lido duas vezes só passa na primeira
     const now = new Date();
     ticket.status = TicketStatus.USED;
     ticket.validatedAt = now;
@@ -159,10 +139,9 @@ export class GateService {
 
     this.logger.log(`Ticket ${ticket.id} validated by gate ${gateUserId}`);
 
-    // Tell whoever has this ticket open on their phone that it just got used
-    // (SPEC_CP18 RF-2). Broadcast failure must never cost someone their entry:
-    // the ticket is already consumed in the database, and a queue at a door
-    // cannot stop because a WebSocket did (RNF-2).
+    // Avisa quem está com o ingresso aberto no celular. Falha de transmissão
+    // não pode custar a entrada de ninguém: o ingresso já foi consumido no
+    // banco, e uma fila na porta não para porque um WebSocket parou.
     try {
       this.gateway.broadcastTicketValidated(event.id, ticket.id, now);
     } catch (error) {
@@ -188,12 +167,8 @@ export class GateService {
   }
 
   /**
-   * Show just enough of the document for a human to compare it against the card
-   * in front of them, and no more (SPEC_CP12, considerações de segurança).
-   *
-   * A gate screen is read over shoulders, in a queue, sometimes photographed.
-   * The operator needs to confirm "this is the same document", not to learn the
-   * number — so we keep the middle and hide the rest.
+   * Mostra o bastante do documento para comparar com o cartão na mão, e nada
+   * além. Tela de portão é lida por cima do ombro, às vezes fotografada.
    */
   static maskDocument(document: string | null): string | null {
     if (!document) return null;
@@ -209,14 +184,9 @@ export class GateService {
     );
   }
 
-  // ─── Gate Agenda (SPEC_CP11 RF-4) ─────────────────────────────────────────
-
   /**
-   * The events this gate can work on, most relevant first.
-   *
-   * Ordering is by operational urgency, not by date: whatever is open for entry
-   * right now goes to the top, because that is the only thing an operator at a
-   * door cares about. Everything else follows chronologically.
+   * A agenda da portaria, ordenada por urgência e não por data: o que está com
+   * a entrada aberta agora vai para o topo.
    */
   async listEventsForGate(): Promise<GateEventSummary[]> {
     const events = await this.eventRepo.find({
@@ -253,9 +223,6 @@ export class GateService {
     });
   }
 
-  /**
-   * Window in which a ticket for this event may be validated (Req 11.7).
-   */
   private entryWindow(event: Event): { windowStart: Date; windowEnd: Date } {
     const eventDate = new Date(event.date);
     return {
@@ -264,9 +231,6 @@ export class GateService {
     };
   }
 
-  /**
-   * Check if an event is in its active validation window (Req 11.7).
-   */
   private isEventActive(event: Event): boolean {
     const now = new Date();
     const { windowStart, windowEnd } = this.entryWindow(event);
@@ -274,7 +238,7 @@ export class GateService {
   }
 
   private logInvalidAttempt(gateUserId: string, payload: string): void {
-    // Hash the payload for logging (don't log full payload — could be malicious)
+    // Só o hash vai para o log: o conteúdo do QR é entrada de terceiro
     const { createHash } = require('crypto');
     const payloadHash = createHash('sha256').update(payload).digest('hex').slice(0, 16);
     this.logger.warn(

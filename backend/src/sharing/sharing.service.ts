@@ -35,13 +35,9 @@ export interface SharePreview {
 }
 
 /**
- * Sharing service — generate links, transfer tickets (Req 10.1-10.6).
- *
- * Key behaviors:
- * - Generate signed URL with 48-hour expiry (Req 10.1)
- * - Transfer: invalidate old ticket, generate new with fresh QR (Req 10.2, 10.3)
- * - Link validation priority: USED > EXPIRED (Req 10.5)
- * - Active link does NOT lock ticket — owner can still use at gate (Req 10.6)
+ * Compartilhamento de ingresso por link, com validade de 48 horas. Aceitar
+ * invalida o original e emite outro, com QR novo. Link em aberto não trava o
+ * ingresso: quem enviou ainda pode entrar com ele até alguém aceitar.
  */
 @Injectable()
 export class SharingService {
@@ -62,18 +58,12 @@ export class SharingService {
     this.secret = this.configService.get<string>('ticket.signingSecret') || '';
   }
 
-  // ─── Generate Sharing Link ────────────────────────────────────────────────
-
-  /**
-   * Generate a sharing link for a ticket the user owns (Req 10.1).
-   * Active link does NOT lock the ticket (Req 10.6).
-   */
+  /** Gera o link de um ingresso do próprio usuário. */
   async generateLink(ticketId: string, userId: string): Promise<{
     token: string;
     shareUrl: string;
     expiresAt: Date;
   }> {
-    // Verify ownership
     const ticket = await this.ticketRepo.findOne({ where: { id: ticketId } });
     if (!ticket) {
       throw new AppError('Ticket not found', ErrorCodes.NOT_FOUND, 404);
@@ -85,13 +75,12 @@ export class SharingService {
       throw new AppError('Ticket is not eligible for sharing', ErrorCodes.BAD_REQUEST, 400);
     }
 
-    // Invalidate any existing active links for this ticket
+    // Um link novo aposenta os anteriores do mesmo ingresso
     await this.linkRepo.update(
       { ticketId, status: SharingLinkStatus.ACTIVE },
       { status: SharingLinkStatus.EXPIRED },
     );
 
-    // Generate token and signature
     const token = randomBytes(32).toString('hex');
     const signature = createHmac('sha256', this.secret)
       .update(`${ticketId}:${token}`)
@@ -100,7 +89,6 @@ export class SharingService {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + this.sharingTtlHours);
 
-    // Save link
     const link = this.linkRepo.create({
       ticketId,
       creatorId: userId,
@@ -112,16 +100,10 @@ export class SharingService {
 
     await this.linkRepo.save(link);
 
-    /*
-      O endereço do site, não a lista de CORS (SPEC_CP22 RF-1).
-
-      `cors.origin` virou uma lista com curingas quando o deploy ganhou domínio
-      de preview. Montar o link com ela produzia
-      `https://a.vercel.app,https://ticket-to-ride-*.vercel.app,http://localhost:5173/share/<token>`
-      — um endereço que não abre em lugar nenhum. É o mesmo defeito que
-      quebrou o retorno do OAuth, e `resolveFrontendUrl` é a função que já o
-      resolve lá.
-    */
+    // O endereço do site, nunca `cors.origin`: essa virou lista com curinga
+    // quando o deploy ganhou domínio de preview, e montar o link com ela
+    // produzia um endereço que não abre em lugar nenhum. Mesmo defeito que
+    // quebrou o retorno do OAuth.
     const baseUrl = resolveFrontendUrl(
       this.configService.get<string>('frontendUrl'),
       this.configService.get<string>('cors.origin'),
@@ -131,14 +113,10 @@ export class SharingService {
     return { token, shareUrl, expiresAt };
   }
 
-  // ─── Prévia do link (SPEC_CP22 RF-2) ──────────────────────────────────────
-
   /**
-   * O que este link oferece, sem consumi-lo.
-   *
-   * Existia só o `accept`, que já transfere. Ou seja: abrir o link era a
-   * decisão — sem ver de que evento é, de que assento, nem se ainda vale.
-   * Leitura não pode ter efeito colateral, e menos ainda um irreversível.
+   * O que o link oferece, sem consumi-lo. Existia só o `accept`: abrir o link
+   * era a decisão, sem ver de que evento é. Leitura não pode ter efeito
+   * colateral, muito menos um irreversível.
    */
   async preview(token: string): Promise<SharePreview> {
     const link = await this.linkRepo.findOne({ where: { token } });
@@ -169,9 +147,8 @@ export class SharingService {
   }
 
   /**
-   * A mesma ordem de prioridade do `acceptTransfer` (Req 10.5): usado vence
-   * expirado. Se as duas telas discordassem, a prévia prometeria o que a
-   * transferência recusaria.
+   * Mesma prioridade do `acceptTransfer`: usado vence expirado. Discordando, a
+   * prévia prometeria o que a transferência recusa.
    */
   private static previewStatus(
     link: SharingLink,
@@ -186,15 +163,7 @@ export class SharingService {
     return 'active';
   }
 
-  // ─── Accept Transfer ──────────────────────────────────────────────────────
-
-  /**
-   * Accept a sharing link and transfer ticket ownership (Req 10.2, 10.3).
-   *
-   * Validation priority (Req 10.5):
-   * 1. Check USED first → LINK_ALREADY_USED
-   * 2. Check EXPIRED → LINK_EXPIRED
-   */
+  /** Aceita o link e transfere a posse do ingresso. */
   async acceptTransfer(token: string, recipientId: string): Promise<Ticket> {
     const link = await this.linkRepo.findOne({ where: { token } });
 
@@ -202,13 +171,11 @@ export class SharingService {
       throw new AppError('Invalid sharing link', ErrorCodes.NOT_FOUND, 404);
     }
 
-    // Priority check: USED before EXPIRED (Req 10.5)
     if (link.status === SharingLinkStatus.USED) {
       throw new LinkAlreadyUsedError();
     }
 
     if (link.status === SharingLinkStatus.EXPIRED || link.expiresAt <= new Date()) {
-      // Mark as expired if it was still active but time passed
       if (link.status === SharingLinkStatus.ACTIVE) {
         link.status = SharingLinkStatus.EXPIRED;
         await this.linkRepo.save(link);
@@ -216,12 +183,10 @@ export class SharingService {
       throw new LinkExpiredError();
     }
 
-    // Prevent self-transfer
     if (link.creatorId === recipientId) {
       throw new AppError('Cannot transfer ticket to yourself', ErrorCodes.BAD_REQUEST, 400);
     }
 
-    // Find the original ticket
     const originalTicket = await this.ticketRepo.findOne({ where: { id: link.ticketId } });
     if (!originalTicket) {
       throw new AppError('Ticket no longer exists', ErrorCodes.NOT_FOUND, 404);
@@ -231,13 +196,10 @@ export class SharingService {
       throw new AppError('Ticket is no longer transferable', ErrorCodes.BAD_REQUEST, 400);
     }
 
-    // ─── Perform Transfer ─────────────────────────────────────────────────
-
-    // 1. Invalidate original ticket (Req 10.2)
     originalTicket.status = TicketStatus.INVALIDATED;
     await this.ticketRepo.save(originalTicket);
 
-    // 2. Generate new ticket for recipient with fresh QR (Req 10.3)
+    // QR novo: o antigo já circulou por aí
     const { v4: uuidv4 } = await import('uuid');
     const newTicketId = uuidv4();
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -269,7 +231,6 @@ export class SharingService {
 
     const savedTicket = await this.ticketRepo.save(newTicket);
 
-    // 3. Mark sharing link as used
     link.status = SharingLinkStatus.USED;
     link.usedAt = new Date();
     link.recipientId = recipientId;

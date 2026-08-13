@@ -7,14 +7,12 @@ import { CatalogSearchResult, CatalogSearchFilters } from './catalog.interfaces'
 import { ExternalServiceError } from '../../shared/errors';
 
 /**
- * Catalog service aggregating Ticketmaster and TMDb results.
+ * Catálogo externo: Ticketmaster e TMDb, com cache de 1 hora no Redis.
  *
- * Key behaviors (Req 4.4 updated):
- * - Caches all external API responses for 1 hour (Redis)
- * - On API failure, timeout (5s), OR empty result set: return cached results if available
- * - If no cache available → throw ExternalServiceError (503 EXTERNAL_SERVICE_UNAVAILABLE)
- * - Empty results + no cache = failure (not an empty success)
- * - API keys are NEVER included in response payloads or logs
+ * Falha, timeout ou resultado vazio caem no cache; sem cache, é 503. Vazio sem
+ * cache conta como falha, não como sucesso vazio — devolver "nenhum evento"
+ * para uma API fora do ar faz o organizador achar que não há o que vender.
+ * Chave de API nunca aparece em resposta nem em log.
  */
 
 const CACHE_TTL_SECONDS = 3600; // 1 hour
@@ -47,9 +45,6 @@ export class CatalogService {
     }
   }
 
-  /**
-   * Search Ticketmaster with cache-first fallback.
-   */
   async searchTicketmaster(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
     return this.withCacheFallback(
       this.cacheKey('tm', filters),
@@ -58,9 +53,6 @@ export class CatalogService {
     );
   }
 
-  /**
-   * Search TMDb with cache-first fallback.
-   */
   async searchTmdb(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
     return this.withCacheFallback(
       this.cacheKey('tmdb', filters),
@@ -70,11 +62,8 @@ export class CatalogService {
   }
 
   /**
-   * Movies currently in Brazilian cinemas (SPEC_CP13).
-   *
-   * Separate from search on purpose: "what can I put on sale tonight" is a
-   * different question from "find me this title", and the answer comes from a
-   * different endpoint.
+   * Filmes em cartaz no Brasil. Separado da busca de propósito: "o que posso pôr
+   * à venda hoje" é outra pergunta, e vem de outro endpoint.
    */
   async nowPlaying(page = 0): Promise<CatalogSearchResult> {
     return this.withCacheFallback(
@@ -84,9 +73,6 @@ export class CatalogService {
     );
   }
 
-  /**
-   * Search both sources and merge results.
-   */
   async searchAll(filters: CatalogSearchFilters): Promise<CatalogSearchResult> {
     const page = filters.page ?? 0;
 
@@ -100,7 +86,6 @@ export class CatalogService {
 
     const items = [...tmItems, ...tmdbItems];
 
-    // If both failed and we got nothing
     if (items.length === 0 && tmResult.status === 'rejected' && tmdbResult.status === 'rejected') {
       throw new ExternalServiceError('All external catalog services');
     }
@@ -113,15 +98,7 @@ export class CatalogService {
     };
   }
 
-  /**
-   * Cache-first fallback pattern (Req 4.4).
-   *
-   * 1. Try to fetch from API
-   * 2. If API fails/times out → return cached results
-   * 3. If API returns empty results → return cached results
-   * 4. If no cache available → throw ExternalServiceError (503)
-   * 5. On success → cache the result for 1 hour
-   */
+  /** Tenta a API; falha, timeout ou vazio caem no cache; sem cache, 503. */
   private async withCacheFallback(
     cacheKey: string,
     fetcher: () => Promise<CatalogSearchResult>,
@@ -130,7 +107,6 @@ export class CatalogService {
     try {
       const result = await fetcher();
 
-      // Empty results treated as failure when no cache exists (Req 4.4)
       if (result.items.length === 0) {
         const cached = await this.getFromCache(cacheKey);
         if (cached) {
@@ -140,18 +116,15 @@ export class CatalogService {
         throw new ExternalServiceError(serviceName);
       }
 
-      // Cache successful non-empty result
       await this.setCache(cacheKey, result);
       return result;
     } catch (error) {
-      // If it's already our error, check cache before re-throwing
       if (error instanceof ExternalServiceError) {
         const cached = await this.getFromCache(cacheKey);
         if (cached) return cached;
         throw error;
       }
 
-      // API failure/timeout — try cache
       this.logger.warn(`${serviceName} API failed: ${error instanceof Error ? error.message : 'unknown'}`);
       const cached = await this.getFromCache(cacheKey);
       if (cached) {
@@ -163,10 +136,7 @@ export class CatalogService {
     }
   }
 
-  /**
-   * Cache key covering every filter — two searches that differ only by city are
-   * different questions and must not share an answer.
-   */
+  /** Duas buscas que diferem só na cidade são perguntas diferentes. */
   private cacheKey(source: string, filters: CatalogSearchFilters): string {
     const parts = [
       filters.query ?? '',
@@ -180,15 +150,12 @@ export class CatalogService {
     return `${CACHE_PREFIX}${source}:${parts.join('|')}`;
   }
 
-  // ─── Cache helpers ──────────────────────────────────────────────────────────
-
   private async getFromCache(key: string): Promise<CatalogSearchResult | null> {
     if (!this.redis) return null;
     try {
       const cached = await this.redis.get(key);
       if (cached) return JSON.parse(cached);
     } catch {
-      // Cache read failure is non-critical
     }
     return null;
   }
@@ -198,7 +165,6 @@ export class CatalogService {
     try {
       await this.redis.setex(key, CACHE_TTL_SECONDS, JSON.stringify(data));
     } catch {
-      // Cache write failure is non-critical
     }
   }
 }

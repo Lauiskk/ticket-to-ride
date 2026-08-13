@@ -5,13 +5,8 @@ import { Strategy, ExtractJwt } from 'passport-jwt';
 import { Request } from 'express';
 
 /**
- * JWT Passport strategy with dual-source token extraction.
- *
- * Extraction order (Req 2.2, 2.3):
- * 1. HttpOnly cookie named "access_token" (preferred for browsers)
- * 2. Authorization: Bearer <token> header (fallback for non-browser clients)
- *
- * This replicates the CyberAI pattern of Cookie + Header auth.
+ * O token é lido do cookie `access_token` primeiro e do header `Authorization`
+ * depois. O navegador usa o cookie; `curl` e os testes de fluxo usam o header.
  */
 
 export interface JwtPayload {

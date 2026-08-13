@@ -26,14 +26,8 @@ export interface LoginResult {
 }
 
 /**
- * Core authentication service.
- *
- * Key behaviors:
- * - Argon2id for password hashing (Req 2.4)
- * - Anti-enumeration: same response for wrong email and wrong password (Req 2.6)
- * - Login rate limiting integrated (Req 2.7)
- * - Token revocation from any mechanism (Req 2.8)
- * - IP extraction from rightmost X-Forwarded-For (Req 2.10)
+ * Autenticação: senha com bcrypt (12 rounds), JWT de 15 min, revogação por
+ * blacklist no Redis e a mesma resposta para e-mail errado e senha errada.
  */
 @Injectable()
 export class AuthService {
@@ -47,8 +41,6 @@ export class AuthService {
     private readonly blacklistService: TokenBlacklistService,
     private readonly rateLimitService: LoginRateLimitService,
   ) {}
-
-  // ─── Registration ─────────────────────────────────────────────────────────
 
   async register(dto: RegisterDto): Promise<LoginResult> {
     const existing = await this.userRepo.findOne({ where: { email: dto.email.toLowerCase() } });
@@ -74,13 +66,9 @@ export class AuthService {
     return this.generateTokens(saved);
   }
 
-  // ─── Login ────────────────────────────────────────────────────────────────
-
   async login(email: string, password: string, clientIp: string): Promise<LoginResult> {
-    // Check rate limit first
     const isBlocked = await this.rateLimitService.isBlocked(clientIp);
     if (isBlocked) {
-      // Anti-enumeration: same generic message (Req 2.6)
       throw new AppError(
         'Invalid credentials',
         ErrorCodes.UNAUTHORIZED,
@@ -92,16 +80,14 @@ export class AuthService {
       where: { email: email.toLowerCase() },
     });
 
-    // Anti-enumeration: if email doesn't exist, still "verify" a dummy hash
-    // to prevent timing attacks (Req 2.6)
+    // E-mail inexistente ainda gasta um hash: sem isso, o tempo de resposta
+    // conta quais e-mails existem.
     if (!user) {
-      // Spend time hashing to match timing of a real verification
       await bcrypt.hash('dummy-password-timing-equalization', 12);
       await this.rateLimitService.recordFailure(clientIp);
       throw new AppError('Invalid credentials', ErrorCodes.UNAUTHORIZED, 401);
     }
 
-    // If user registered via Google, they must login via Google
     if (user.oauthProvider === 'google') {
       throw new AppError(
         'Esta conta foi criada com Google. Use o botão "Login com Google".',
@@ -111,7 +97,6 @@ export class AuthService {
     }
 
     if (!user.passwordHash) {
-      // User registered via OAuth, no password set
       await this.rateLimitService.recordFailure(clientIp);
       throw new AppError('Invalid credentials', ErrorCodes.UNAUTHORIZED, 401);
     }
@@ -122,12 +107,10 @@ export class AuthService {
       throw new AppError('Invalid credentials', ErrorCodes.UNAUTHORIZED, 401);
     }
 
-    // Successful login — reset rate limit
     await this.rateLimitService.resetFailures(clientIp);
 
-    // Check if 2FA is required
     if (user.totpEnabled) {
-      // Return partial result — frontend must submit TOTP code
+      // Resultado parcial: falta o código TOTP
       const tempToken = this.jwtService.sign(
         { sub: user.id, twoFactorPending: true },
         { expiresIn: '5m' },
@@ -143,15 +126,9 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  // ─── Perfil da sessão (SPEC_CP20 RF-2) ────────────────────────────────────
-
   /**
-   * O usuário por trás do cookie.
-   *
-   * Lê do banco em vez de devolver o conteúdo do JWT: papel revogado ou conta
-   * apagada precisam aparecer aqui, não continuar valendo até o token expirar.
-   * Devolve exatamente o que a interface usa — nunca o hash de senha nem o
-   * segredo de 2FA.
+   * O usuário por trás do cookie. Lê do banco, não do JWT: papel revogado ou
+   * conta apagada precisam aparecer agora, não quando o token expirar.
    */
   async getProfile(userId: string): Promise<{
     id: string;
@@ -166,8 +143,6 @@ export class AuthService {
 
     return { id: user.id, email: user.email, name: user.name, role: user.role };
   }
-
-  // ─── Token Operations ─────────────────────────────────────────────────────
 
   async logout(jti: string, exp: number): Promise<void> {
     const remainingTtl = exp - Math.floor(Date.now() / 1000);
@@ -188,12 +163,10 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  // ─── 2FA ──────────────────────────────────────────────────────────────────
-
   async enable2FA(userId: string): Promise<{ secret: string; otpauthUrl: string }> {
     const { Authenticator } = await import('otplib') as any;
     const authenticator = new Authenticator() as any;
-    // Fallback for different otplib versions
+    // A API muda entre versões do otplib
     const auth = authenticator.generateSecret ? authenticator : (await import('otplib') as any).default?.authenticator || (await import('otplib') as any);
     
     const user = await this.userRepo.findOne({ where: { id: userId } });
@@ -233,8 +206,6 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
-  // ─── Helpers ──────────────────────────────────────────────────────────────
-
   private generateTokens(user: User): LoginResult {
     const jti = uuidv4();
     const payload: Omit<JwtPayload, 'iat' | 'exp'> = {
@@ -260,15 +231,9 @@ export class AuthService {
     };
   }
 
-  // ─── Google OAuth ──────────────────────────────────────────────────────────
-
   /**
-   * Handle Google OAuth login.
-   *
-   * Rules:
-   * - If email exists with passwordHash (registered via email/password) → error "Este email já tem conta"
-   * - If email exists with oauthProvider=google → login (return tokens)
-   * - If email doesn't exist → create new user with role CLIENT
+   * Login pelo Google. E-mail que já tem conta com senha é recusado — vincular
+   * as duas sem confirmar posse do e-mail seria caminho de sequestro de conta.
    */
   async handleGoogleLogin(googleUser: {
     email: string;
@@ -281,19 +246,17 @@ export class AuthService {
     });
 
     if (existing) {
-      // User exists with password (not OAuth) — block
       if (existing.passwordHash && existing.oauthProvider !== 'google') {
         return { error: 'Este email já tem uma conta. Faça login com email e senha.' };
       }
 
-      // User exists with Google OAuth — login
       if (existing.oauthProvider === 'google') {
         const tokens = this.generateTokens(existing);
         return tokens;
       }
     }
 
-    // New user — create with CLIENT role via Google
+    // Conta nova pelo Google nasce como cliente
     const user = this.userRepo.create({
       email: googleUser.email.toLowerCase(),
       name: googleUser.name,
@@ -309,25 +272,12 @@ export class AuthService {
   }
 
   /**
-   * Extract client IP from the rightmost value of X-Forwarded-For (Req 2.10).
-   * The rightmost value is the one appended by our trusted proxy.
-   */
-  /**
    * De quem é esta requisição (SPEC_CP21).
    *
-   * `req.ip` primeiro, porque com `trust proxy` configurado o Express já sabe
-   * quantos saltos são nossos e devolve o cliente de verdade.
-   *
-   * A versão anterior lia `x-forwarded-for` e pegava a entrada **mais à
-   * direita**, com o comentário de que seria "a mais confiável". Não é: a
-   * direita é o proxy mais próximo da API — o mesmo endereço para todo mundo.
-   * O limitador de login passaria a contar todos os visitantes como uma pessoa
-   * só: cinco erros de qualquer um trancariam a porta para todos por meia hora,
-   * e o atacante real não ficaria isolado de ninguém. Um controle de segurança
-   * assim é pior que a ausência dele — vira negação de serviço de graça.
-   *
-   * O cliente é a **primeira** entrada da lista; as seguintes são os proxies do
-   * caminho.
+   * `req.ip` primeiro: com `trust proxy` o Express já sabe quantos saltos são
+   * nossos. Se sobrar o cabeçalho, o cliente é a PRIMEIRA entrada — a última é o
+   * proxy, o mesmo endereço para todo mundo. Lendo pela direita, cinco erros de
+   * qualquer um trancavam a porta para todos: negação de serviço de graça.
    */
   static extractClientIp(req: {
     headers: Record<string, string | string[] | undefined>;

@@ -14,14 +14,8 @@ import { AppError, ErrorCodes } from '../shared/errors';
 import { PaginatedResult } from '../shared/interceptors/response.interceptor';
 
 /**
- * Event service — handles creation, publication, cancellation, and browsing.
- *
- * Key behaviors:
- * - Create: status=draft, reject past dates (Req 5.8)
- * - Publish: validate all fields + seats configured (Req 5.5, 5.6)
- * - Cancel: from ANY status, trigger refund placeholder (Req 5.7)
- * - Browse: only published + validation-passing events, geo-sort, filters (Req 6.1-6.5)
- * - Never expose organizer internal ID in responses (Req 6.4)
+ * Eventos: criação, publicação, cancelamento e vitrine. A resposta pública
+ * nunca carrega o id do organizador.
  */
 /**
  * How long after its start time an event stays buyable. Matches the gate's
@@ -44,10 +38,7 @@ export class EventService {
     private readonly gateway: ReservationGateway,
   ) {}
 
-  // ─── Create ─────────────────────────────────────────────────────────────────
-
   async create(organizerId: string, dto: CreateEventDto): Promise<EventResponseDto> {
-    // Reject past dates (Req 5.8)
     const eventDate = new Date(dto.date);
     if (eventDate <= new Date()) {
       throw new AppError(
@@ -72,7 +63,7 @@ export class EventService {
       seatMapConfig: dto.sections || dto.sectors ? { sections: dto.sections, sectors: dto.sectors } : null,
       price: dto.price,
       currency: dto.currency.toUpperCase(),
-      // Half-price on unless the organizer explicitly opts out (SPEC_CP12 RF-8)
+      // Meia-entrada ligada por padrão: é lei, não recurso opcional
       halfPriceEnabled: dto.halfPriceEnabled ?? true,
       halfPriceQuota: dto.halfPriceQuota ?? null,
       status: EventStatus.DRAFT,
@@ -83,18 +74,14 @@ export class EventService {
 
     const saved = await this.eventRepo.save(event);
 
-    // Create seats based on seating type
     await this.createSeats(saved.id, dto);
 
     return EventResponseDto.fromEntity(saved);
   }
 
-  // ─── Publish ────────────────────────────────────────────────────────────────
-
   async publish(eventId: string, organizerId: string): Promise<EventResponseDto> {
     const event = await this.findOwnedEvent(eventId, organizerId);
 
-    // Validate publication requirements (Req 5.5)
     this.validatePublicationReady(event);
 
     event.status = EventStatus.PUBLISHED;
@@ -102,25 +89,18 @@ export class EventService {
     return EventResponseDto.fromEntity(saved);
   }
 
-  // ─── Cancel ─────────────────────────────────────────────────────────────────
-
   /**
-   * Cancelar de verdade: devolve os lugares, invalida os ingressos e o dinheiro
-   * volta (SPEC_CP23).
+   * Cancelar de verdade: lugares voltam, ingressos param de valer e o dinheiro
+   * é estornado (SPEC_CP23).
    *
-   * Isto aqui era `event.status = CANCELLED` com um TODO ao lado. O resto ficava
-   * onde estava: assentos vendidos seguiam vendidos, ingressos seguiam válidos —
-   * e seguiam **abrindo a portaria**, que olha a janela de entrada e não o
-   * status do evento — e o dinheiro seguia conosco. Para quem comprou, o evento
-   * era cancelado e nada acontecia.
-   *
-   * A mudança de estado é uma transação só (RNF-1): meio cancelamento, com
-   * assentos livres e ingressos ainda válidos, é pior que nenhum.
+   * Era só `status = CANCELLED` com um TODO ao lado — ingressos seguiam válidos
+   * e ainda abriam a portaria. Tudo numa transação: meio cancelamento é pior
+   * que nenhum.
    */
   async cancel(eventId: string, organizerId: string): Promise<EventResponseDto> {
     const event = await this.findOwnedEvent(eventId, organizerId);
 
-    // AC-5: já cancelado é trabalho feito — não estorna de novo
+    // Já cancelado é trabalho feito — não estorna de novo
     if (event.status === EventStatus.CANCELLED) {
       return EventResponseDto.fromEntity(event);
     }
@@ -135,15 +115,14 @@ export class EventService {
       event.status = EventStatus.CANCELLED;
       await queryRunner.manager.save(Event, event);
 
-      // Os lugares voltam ao estoque (RF-1)
+      // Os lugares voltam ao estoque
       await queryRunner.manager.update(
         Seat,
         { eventId, status: In([SeatStatus.SOLD, SeatStatus.RESERVED]) },
         { status: SeatStatus.AVAILABLE },
       );
 
-      // Os ingressos param de valer (RF-2). Esta é a barreira principal; a
-      // checagem na portaria é a segunda, não a única.
+      // Barreira principal; a checagem na portaria é a segunda, não a única
       await queryRunner.manager.update(
         Ticket,
         { eventId, status: TicketStatus.ACTIVE },
@@ -168,25 +147,19 @@ export class EventService {
       await queryRunner.release();
     }
 
-    // Quem está com o mapa aberto vê os lugares voltarem (RF-5)
+    // Quem está com o mapa aberto vê os lugares voltarem
     if (releasedSeatIds.length > 0) {
       try {
         this.gateway.broadcastSeatsReleased(eventId, releasedSeatIds);
       } catch {
-        // Aviso ao vivo é melhoria; o estado já está correto no banco
+        // Aviso ao vivo é melhoria: o estado já está correto no banco
       }
     }
 
-    /*
-      Estorno fora da transação, e depois do commit.
-
-      O cancelamento é a decisão do organizador e precisa valer na hora — é ele
-      que fecha a entrada e libera os assentos. O dinheiro é consequência, e é
-      retentável: cada estorno leva chave de idempotência na Stripe. Se a Stripe
-      estiver fora do ar, sobra uma reserva paga de evento cancelado, que aparece
-      no log e pode ser reprocessada. Visível, não silenciosa — e melhor do que
-      desfazer o cancelamento e deixar o evento à venda.
-    */
+    // Estorno depois do commit: o cancelamento vale na hora, o dinheiro é
+    // consequência retentável (idempotencyKey na Stripe). Stripe fora do ar
+    // deixa reserva paga de evento cancelado no log — visível, reprocessável, e
+    // melhor do que desfazer o cancelamento e deixar o evento à venda.
     try {
       await this.payments.refundReservationsForEvent(eventId);
     } catch (error) {
@@ -198,8 +171,6 @@ export class EventService {
 
     return EventResponseDto.fromEntity(event);
   }
-
-  // ─── Get by ID ──────────────────────────────────────────────────────────────
 
   async getById(eventId: string): Promise<EventResponseDto> {
     const event = await this.eventRepo.findOne({ where: { id: eventId } });
@@ -214,8 +185,6 @@ export class EventService {
     return EventResponseDto.fromEntity(event, availableSeats);
   }
 
-  // ─── Get organizer's events ─────────────────────────────────────────────────
-
   async getMyEvents(organizerId: string): Promise<EventResponseDto[]> {
     const events = await this.eventRepo.find({
       where: { organizerId },
@@ -224,17 +193,12 @@ export class EventService {
     return events.map((e) => EventResponseDto.fromEntity(e));
   }
 
-  // ─── Organizer Metrics (SPEC_CP12 RF-6) ───────────────────────────────────
-
   /**
-   * Sales panel for one event, for its own organizer.
-   *
-   * Deliberately aggregates only. An organizer needs to know how the house is
-   * filling and how much came in — not who bought what. No buyer identity,
-   * e-mail or document ever appears here.
+   * Bilheteria de um evento, para o organizador dele. Só agregado: quem produz
+   * precisa saber como a casa enche e quanto entrou, não quem comprou o quê.
    */
   async getMetrics(eventId: string, organizerId: string): Promise<EventMetricsDto> {
-    // Reuses the ownership check — a stranger's event is simply "not found"
+    // Evento de outra pessoa é "não encontrado"
     const event = await this.findOwnedEvent(eventId, organizerId);
 
     const [seatCounts, sectionRows, revenueRow, ticketsIssued, ticketsValidated, halfPriceTickets] =
@@ -286,7 +250,7 @@ export class EventService {
       seatsSold,
       seatsReserved,
       seatsAvailable,
-      // AC-11: an event with no seats must not divide by zero
+      // Evento sem assento não pode dividir por zero
       occupancyRate: seatsTotal === 0 ? 0 : Math.round((seatsSold / seatsTotal) * 100),
       revenue: Number(revenueRow?.revenue ?? 0),
       currency: event.currency,
@@ -301,17 +265,14 @@ export class EventService {
     };
   }
 
-  // ─── Browse (Public) ────────────────────────────────────────────────────────
-
   async browse(dto: SearchEventsDto): Promise<PaginatedResult<EventResponseDto>> {
     const page = dto.page || 1;
     const pageSize = dto.pageSize || 20;
 
-    // An event leaves the catalogue when its doors close, not when it starts.
-    // Filtering on `date > now` hid anything already running — which is exactly
-    // when a box office still sells: at the door, to the people in the queue.
-    // The cutoff mirrors the gate's entry window so the two never disagree
-    // about whether an event is "happening".
+    // O evento sai da vitrine quando as portas fecham, não quando começa:
+    // filtrar por `date > now` escondia justamente o que ainda vende na porta.
+    // O corte espelha a janela de entrada da portaria para as duas não
+    // discordarem sobre o que está "acontecendo".
     const stillSelling = new Date(Date.now() - EVENT_SALES_GRACE_MS);
 
     let qb = this.eventRepo
@@ -319,8 +280,6 @@ export class EventService {
       .where('event.status = :status', { status: EventStatus.PUBLISHED })
       .andWhere('event.date > :cutoff', { cutoff: stillSelling })
       .andWhere('event.deleted_at IS NULL');
-
-    // ─── Filters ──────────────────────────────────────────────────────────
 
     if (dto.keyword) {
       qb = qb.andWhere(
@@ -349,10 +308,7 @@ export class EventService {
       qb = qb.andWhere('event.price <= :priceMax', { priceMax: dto.priceMax });
     }
 
-    // ─── Geo-proximity sort (Req 6.2) ─────────────────────────────────────
-
     if (dto.lat !== undefined && dto.lng !== undefined) {
-      // Haversine distance calculation in SQL
       const distanceExpr = `(
         6371 * acos(
           cos(radians(:lat)) * cos(radians(event.venue_lat)) *
@@ -361,14 +317,13 @@ export class EventService {
         )
       )`;
 
-      // Only filter by radius when radius > 0 (Req 6.2: zero radius = no filter, sort only)
+      // Raio zero não filtra, só ordena por proximidade
       if (dto.radius && dto.radius > 0) {
         qb = qb
           .andWhere('event.venue_lat IS NOT NULL')
           .andWhere('event.venue_lng IS NOT NULL')
           .andWhere(`${distanceExpr} <= :radius`, { lat: dto.lat, lng: dto.lng, radius: dto.radius });
       } else {
-        // Zero radius: include all events with coordinates, sorted by proximity
         qb = qb
           .andWhere('event.venue_lat IS NOT NULL')
           .andWhere('event.venue_lng IS NOT NULL');
@@ -379,11 +334,8 @@ export class EventService {
         .setParameters({ lat: dto.lat, lng: dto.lng })
         .orderBy('distance', 'ASC');
     } else {
-      // ─── Standard sorting ──────────────────────────────────────────────
       qb = this.applySorting(qb, dto.sortBy, dto.keyword);
     }
-
-    // ─── Pagination ───────────────────────────────────────────────────────
 
     const total = await qb.getCount();
     const events = await qb
@@ -396,14 +348,12 @@ export class EventService {
     return { data: items, total, page, pageSize };
   }
 
-  // ─── Helpers ────────────────────────────────────────────────────────────────
-
   private async findOwnedEvent(eventId: string, organizerId: string): Promise<Event> {
     const event = await this.eventRepo.findOne({ where: { id: eventId } });
     if (!event) {
       throw new AppError('Event not found', ErrorCodes.NOT_FOUND, 404);
     }
-    // Ownership check — defense in depth (Req 3.4)
+    // Dono conferido no serviço também, não só no guard
     if (event.organizerId !== organizerId) {
       throw new AppError('Event not found', ErrorCodes.NOT_FOUND, 404); // Anti-enumeration
     }
@@ -428,15 +378,13 @@ export class EventService {
       );
     }
 
-    // Check seats exist
-    // Note: this is sync validation of seat_map_config; actual seat count is checked asynchronously
+    // Validação síncrona do seat_map_config; a contagem real vem depois
   }
 
   private async createSeats(eventId: string, dto: CreateEventDto): Promise<void> {
     const seats: Partial<Seat>[] = [];
 
     if (dto.seatingType === SeatingType.NUMBERED && dto.sections) {
-      // Numbered seats: sections × rows × seatsPerRow
       for (const section of dto.sections) {
         for (let r = 1; r <= section.rows; r++) {
           for (let s = 1; s <= section.seatsPerRow; s++) {
@@ -451,7 +399,6 @@ export class EventService {
         }
       }
     } else if (dto.seatingType === SeatingType.GENERAL_ADMISSION && dto.sectors) {
-      // General admission: sectors with individual capacities
       for (const sector of dto.sectors) {
         for (let i = 1; i <= sector.capacity; i++) {
           seats.push({
@@ -464,7 +411,6 @@ export class EventService {
         }
       }
     } else if (dto.seatingType === SeatingType.GENERAL_ADMISSION) {
-      // Simple GA: single sector with total capacity
       for (let i = 1; i <= dto.capacity; i++) {
         seats.push({
           eventId,
@@ -477,7 +423,6 @@ export class EventService {
     }
 
     if (seats.length > 0) {
-      // Batch insert for performance
       const batchSize = 500;
       for (let i = 0; i < seats.length; i += batchSize) {
         const batch = seats.slice(i, i + batchSize);
@@ -501,7 +446,7 @@ export class EventService {
       case SortBy.PRICE_DESC:
         return qb.orderBy('event.price', 'DESC');
       case SortBy.RELEVANCE:
-        // When keyword is active, title matches rank higher
+        // Com busca por texto, casar no título vale mais que casar na descrição
         if (keyword) {
           return qb
             .addSelect(

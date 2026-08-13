@@ -11,13 +11,9 @@ import { Transform } from 'class-transformer';
 import { UserRole } from '../../user/entities/user.entity';
 
 /**
- * Registration DTO with full server-side validation.
- *
- * Security (CyberAI patterns):
- * - Email: validated format + trimmed + lowercased + max 254 chars
- * - Password: min 8, requires uppercase, lowercase, number, special char
- * - Name: trimmed, stripped of HTML, 2-100 chars
- * - Role: must be a valid enum value (prevents injection of admin roles)
+ * Cadastro, validado inteiramente no servidor. O papel é enum fechado: sem
+ * isso, `role` vira campo de escolha livre e qualquer um se cadastra como
+ * organizador.
  */
 export class RegisterDto {
   @IsEmail({}, { message: 'Formato de email inválido' })

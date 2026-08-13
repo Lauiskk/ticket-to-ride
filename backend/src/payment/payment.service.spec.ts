@@ -90,8 +90,6 @@ describe('PaymentService (SPEC_CP10)', () => {
     );
   });
 
-  // ─── B21 ────────────────────────────────────────────────────────────────────
-
   /**
    * Voltar para um checkout em aberto (B21).
    *
@@ -188,8 +186,6 @@ describe('PaymentService (SPEC_CP10)', () => {
     });
   });
 
-  // ─── AC-3 ───────────────────────────────────────────────────────────────────
-
   describe('AC-3: webhook de sucesso é a fonte de verdade', () => {
     it('marca reserva como paid, assentos como sold e gera 1 ingresso por assento', async () => {
       paymentRepo.findOne.mockResolvedValue({
@@ -213,8 +209,6 @@ describe('PaymentService (SPEC_CP10)', () => {
     });
   });
 
-  // ─── AC-4 ───────────────────────────────────────────────────────────────────
-
   describe('AC-4: idempotência do webhook', () => {
     it('não regenera ingressos quando o pagamento já está succeeded', async () => {
       paymentRepo.findOne.mockResolvedValue({
@@ -229,8 +223,6 @@ describe('PaymentService (SPEC_CP10)', () => {
       expect(ticketService.generateForReservation).not.toHaveBeenCalled();
     });
   });
-
-  // ─── AC-5 ───────────────────────────────────────────────────────────────────
 
   describe('AC-5: recusa devolve os assentos', () => {
     it('marca reserva como payment_failed e assentos voltam a available', async () => {
@@ -254,8 +246,6 @@ describe('PaymentService (SPEC_CP10)', () => {
       expect(ticketService.generateForReservation).not.toHaveBeenCalled();
     });
   });
-
-  // ─── AC-6 ───────────────────────────────────────────────────────────────────
 
   describe('AC-6: ticketCount real na reconfirmação idempotente', () => {
     it('retorna a contagem real de ingressos, não zero', async () => {
@@ -281,8 +271,6 @@ describe('PaymentService (SPEC_CP10)', () => {
     });
   });
 
-  // ─── RF-5 ───────────────────────────────────────────────────────────────────
-
   describe('RF-5: /confirm desabilitado quando há chave Stripe real', () => {
     it('rejeita a confirmação manual com 400 quando a chave é sk_test_', async () => {
       paymentRepo.findOne.mockResolvedValue({
@@ -299,8 +287,6 @@ describe('PaymentService (SPEC_CP10)', () => {
     });
   });
 
-  // ─── AC-E2 ──────────────────────────────────────────────────────────────────
-
   describe('AC-E2: assinatura de webhook inválida', () => {
     it('retorna null sem efeito colateral', () => {
       const result = service.verifyWebhookSignature(
@@ -312,8 +298,6 @@ describe('PaymentService (SPEC_CP10)', () => {
       expect(reservationRepo.update).not.toHaveBeenCalled();
     });
   });
-
-  // ─── SPEC_CP15 B13 ──────────────────────────────────────────────────────────
 
   describe('B13: pagamento pago sem ingresso é reparado', () => {
     beforeEach(() => {

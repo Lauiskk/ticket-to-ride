@@ -76,8 +76,6 @@ describe('GateService (SPEC_CP11)', () => {
     service = new GateService(ticketRepo, eventRepo, signer, gateway);
   });
 
-  // ─── AC-6 ───────────────────────────────────────────────────────────────────
-
   describe('AC-6: ingresso válido em evento ao vivo libera a entrada', () => {
     it('retorna valid true e marca o ingresso como usado', async () => {
       eventRepo.findOne.mockResolvedValue(liveEvent());
@@ -103,8 +101,6 @@ describe('GateService (SPEC_CP11)', () => {
       );
     });
   });
-
-  // ─── SPEC_CP12 AC-6 / AC-7 ──────────────────────────────────────────────────
 
   describe('SPEC_CP12 — meia-entrada na portaria', () => {
     it('AC-6: ingresso de meia traz categoria e documento MASCARADO', async () => {
@@ -161,8 +157,6 @@ describe('GateService (SPEC_CP11)', () => {
     });
   });
 
-  // ─── AC-7 ───────────────────────────────────────────────────────────────────
-
   describe('AC-7: mesmo ingresso duas vezes', () => {
     it('recusa com TICKET_ALREADY_USED e não regrava a validação', async () => {
       eventRepo.findOne.mockResolvedValue(liveEvent());
@@ -181,8 +175,6 @@ describe('GateService (SPEC_CP11)', () => {
     });
   });
 
-  // ─── AC-8 ───────────────────────────────────────────────────────────────────
-
   describe('AC-8: ingresso de outro evento', () => {
     it('recusa como INVALID_TICKET sem consumir o ingresso', async () => {
       eventRepo.findOne.mockResolvedValue(liveEvent());
@@ -198,8 +190,6 @@ describe('GateService (SPEC_CP11)', () => {
       expect(ticketRepo.save).not.toHaveBeenCalled();
     });
   });
-
-  // ─── AC-E1 ──────────────────────────────────────────────────────────────────
 
   describe('AC-E1: evento fora da janela de entrada', () => {
     it('recusa com EVENT_NOT_ACTIVE e mantém o ingresso ativo', async () => {
@@ -222,8 +212,6 @@ describe('GateService (SPEC_CP11)', () => {
     });
   });
 
-  // ─── AC-E2 ──────────────────────────────────────────────────────────────────
-
   describe('AC-E2: QR adulterado', () => {
     it('recusa como INVALID_TICKET sem consultar evento nem ingresso', async () => {
       const valid = signedQr('ticket-1', LIVE_EVENT_ID);
@@ -236,8 +224,6 @@ describe('GateService (SPEC_CP11)', () => {
       expect(ticketRepo.save).not.toHaveBeenCalled();
     });
   });
-
-  // ─── SPEC_CP18 — o ingresso muda de estado na tela de quem o comprou ────────
 
   describe('SPEC_CP18 — aviso de validação em tempo real', () => {
     const activeTicket = () =>
@@ -335,8 +321,6 @@ describe('GateService (SPEC_CP11)', () => {
       expect(serialised).not.toContain('Plateia-1-1');
     });
   });
-
-  // ─── AC-9 / AC-E3 ───────────────────────────────────────────────────────────
 
   describe('AC-9: agenda operacional da portaria', () => {
     it('traz entryOpen e as contagens de ingressos por evento', async () => {
