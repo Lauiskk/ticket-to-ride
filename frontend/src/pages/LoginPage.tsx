@@ -12,6 +12,21 @@ const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // O parser do `user` que vinha na URL saiu junto com o token: nada de sessão
 // trafega mais por query string (SPEC_CP20 RF-4).
 
+/**
+ * Para onde voltar depois de entrar (SPEC_CP22 RF-5).
+ *
+ * Só caminho interno: aceitar qualquer URL aqui transformaria a tela de login
+ * num trampolim para site alheio — o clássico *open redirect*, em que o
+ * atacante manda `/login?next=https://site-falso` e a vítima é levada para lá
+ * logo depois de digitar a senha, achando que ainda está no lugar certo.
+ * `//outro.site` também é endereço externo, daí a segunda checagem.
+ */
+function destinoSeguro(next: string | null): string | null {
+  if (!next) return null;
+  if (!next.startsWith('/') || next.startsWith('//')) return null;
+  return next;
+}
+
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -78,7 +93,8 @@ export function LoginPage() {
     try {
       // O papel vem da resposta do servidor, não de um JSON no navegador
       const userData = await login(sanitizeEmail(email), password);
-      navigate(getDefaultRoute(userData.role));
+      const next = destinoSeguro(searchParams.get('next'));
+      navigate(next ?? getDefaultRoute(userData.role));
     } catch (err: any) {
       setError(err.message || 'Credenciais inválidas');
     } finally {

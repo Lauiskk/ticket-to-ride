@@ -38,6 +38,7 @@ const OrganizerEventPage = lazy(() =>
 const GateValidationPage = lazy(() =>
   import('./pages/GateValidationPage').then((m) => ({ default: m.GateValidationPage })),
 );
+const SharePage = lazy(() => import('./pages/SharePage').then((m) => ({ default: m.SharePage })));
 
 /** Neutral placeholder while a route chunk arrives. */
 function RouteFallback() {
@@ -127,6 +128,10 @@ export function App() {
             </ProtectedRoute>
           }
         />
+        {/* Destino do link de compartilhamento. Pública: quem recebe pode ainda
+            não ter conta, e precisa ver o que está sendo oferecido antes de
+            criar uma (SPEC_CP22 RF-3). */}
+        <Route path="share/:token" element={<SharePage />} />
       </Route>
       <Route
         path="login"

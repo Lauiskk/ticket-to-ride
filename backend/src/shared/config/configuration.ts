@@ -108,6 +108,15 @@ export const configuration = () => ({
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   },
 
+  /**
+   * Endereço navegável do site — para links que uma PESSOA vai abrir.
+   *
+   * Separado de `cors.origin` de propósito: aquela é uma lista de regras de
+   * comparação, com curingas; esta é um endereço só. Confundir as duas já
+   * quebrou o retorno do OAuth e o link de compartilhamento.
+   */
+  frontendUrl: process.env.FRONTEND_URL || '',
+
   reservation: {
     ttlMinutes: parseInt(process.env.RESERVATION_TTL_MINUTES || '10', 10),
   },

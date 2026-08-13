@@ -14,6 +14,25 @@ import {
   LinkExpiredError,
   LinkAlreadyUsedError,
 } from '../shared/errors';
+import { resolveFrontendUrl } from '../shared/config/frontend-url';
+
+/**
+ * O que o destinatário vê antes de decidir (SPEC_CP22 RF-2).
+ *
+ * Evento, data, local e assento. Nada de quem comprou: um link que vaza revela
+ * um lugar num show, não uma pessoa.
+ */
+export interface SharePreview {
+  status: 'active' | 'used' | 'expired' | 'not_transferable';
+  seatIdentifier: string;
+  expiresAt: Date;
+  event: {
+    title: string;
+    date: Date;
+    venueName: string;
+    venueCity: string | null;
+  } | null;
+}
 
 /**
  * Sharing service — generate links, transfer tickets (Req 10.1-10.6).
@@ -93,10 +112,78 @@ export class SharingService {
 
     await this.linkRepo.save(link);
 
-    const baseUrl = this.configService.get<string>('cors.origin', 'http://localhost:5173');
+    /*
+      O endereço do site, não a lista de CORS (SPEC_CP22 RF-1).
+
+      `cors.origin` virou uma lista com curingas quando o deploy ganhou domínio
+      de preview. Montar o link com ela produzia
+      `https://a.vercel.app,https://ticket-to-ride-*.vercel.app,http://localhost:5173/share/<token>`
+      — um endereço que não abre em lugar nenhum. É o mesmo defeito que
+      quebrou o retorno do OAuth, e `resolveFrontendUrl` é a função que já o
+      resolve lá.
+    */
+    const baseUrl = resolveFrontendUrl(
+      this.configService.get<string>('frontendUrl'),
+      this.configService.get<string>('cors.origin'),
+    );
     const shareUrl = `${baseUrl}/share/${token}`;
 
     return { token, shareUrl, expiresAt };
+  }
+
+  // ─── Prévia do link (SPEC_CP22 RF-2) ──────────────────────────────────────
+
+  /**
+   * O que este link oferece, sem consumi-lo.
+   *
+   * Existia só o `accept`, que já transfere. Ou seja: abrir o link era a
+   * decisão — sem ver de que evento é, de que assento, nem se ainda vale.
+   * Leitura não pode ter efeito colateral, e menos ainda um irreversível.
+   */
+  async preview(token: string): Promise<SharePreview> {
+    const link = await this.linkRepo.findOne({ where: { token } });
+    if (!link) {
+      throw new AppError('Invalid sharing link', ErrorCodes.NOT_FOUND, 404);
+    }
+
+    const ticket = await this.ticketRepo.findOne({
+      where: { id: link.ticketId },
+      relations: ['event'],
+    });
+
+    const status = SharingService.previewStatus(link, ticket);
+
+    return {
+      status,
+      seatIdentifier: ticket?.seatIdentifier ?? '',
+      expiresAt: link.expiresAt,
+      event: ticket?.event
+        ? {
+            title: ticket.event.title,
+            date: ticket.event.date,
+            venueName: ticket.event.venueName,
+            venueCity: ticket.event.venueCity ?? null,
+          }
+        : null,
+    };
+  }
+
+  /**
+   * A mesma ordem de prioridade do `acceptTransfer` (Req 10.5): usado vence
+   * expirado. Se as duas telas discordassem, a prévia prometeria o que a
+   * transferência recusaria.
+   */
+  private static previewStatus(
+    link: SharingLink,
+    ticket: Ticket | null,
+  ): SharePreview['status'] {
+    if (link.status === SharingLinkStatus.USED) return 'used';
+    if (link.status === SharingLinkStatus.EXPIRED || link.expiresAt <= new Date()) {
+      return 'expired';
+    }
+    // O ingresso pode ter sido validado na portaria depois de o link sair
+    if (!ticket || ticket.status !== TicketStatus.ACTIVE) return 'not_transferable';
+    return 'active';
   }
 
   // ─── Accept Transfer ──────────────────────────────────────────────────────
