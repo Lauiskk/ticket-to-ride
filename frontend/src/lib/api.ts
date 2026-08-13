@@ -28,9 +28,27 @@ export function apiUrl(path: string): string {
 class ApiClient {
   private baseUrl: string;
   private refreshing: Promise<boolean> | null = null;
+  /**
+   * Token de CSRF em memória (SPEC_CP20 B20).
+   *
+   * Ele também vem num cookie, mas esse cookie é do domínio da **API**. Em
+   * produção o site está em outro domínio, e `document.cookie` de um domínio
+   * não enxerga cookie do outro — o navegador manda, o JavaScript não lê. Por
+   * isso o valor chega junto da resposta de autenticação e mora aqui.
+   */
+  private csrfToken: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+  }
+
+  /** Chamado pelo AuthContext sempre que a sessão é criada ou relida. */
+  setCsrfToken(token: string | null | undefined): void {
+    if (token) this.csrfToken = token;
+  }
+
+  clearCsrfToken(): void {
+    this.csrfToken = null;
   }
 
   /**
@@ -51,7 +69,9 @@ class ApiClient {
     };
 
     if (method !== 'GET' && method !== 'HEAD') {
-      const csrf = readCookie('csrf_token');
+      // Memória primeiro (funciona entre domínios); o cookie é o caminho de
+      // desenvolvimento, onde o Vite faz proxy e tudo é mesma origem.
+      const csrf = this.csrfToken ?? readCookie('csrf_token');
       if (csrf) headers['X-CSRF-Token'] = csrf;
     }
 
@@ -162,9 +182,13 @@ class ApiClient {
           headers: this.getHeaders('POST'),
           credentials: 'include',
         });
-        // O cookie novo vem no `Set-Cookie` da resposta; não há nada para
-        // guardar aqui — o sucesso é o próprio 200.
-        return res.ok;
+        if (!res.ok) return false;
+
+        // A sessão renovada traz um par de CSRF novo — sem atualizá-lo aqui, a
+        // primeira mutação depois da renovação levaria o token velho.
+        const data = await res.json().catch(() => null);
+        this.setCsrfToken(data?.csrfToken);
+        return true;
       } catch {
         return false;
       } finally {

@@ -45,7 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    */
   const refreshSession = useCallback(async (): Promise<User | null> => {
     try {
-      const res = await api.get<User>('/auth/me', { allowAnonymous: true });
+      const res = await api.get<User & { csrfToken?: string }>('/auth/me', {
+        allowAnonymous: true,
+      });
+      // O token de CSRF vem junto porque o cookie dele é de outro domínio (B20)
+      api.setCsrfToken(res.data.csrfToken);
       setUser(res.data);
       return res.data;
     } catch {
@@ -61,7 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string): Promise<User> => {
     const res = await api.post<AuthResponse>('/auth/login', { email, password });
-    // O cookie veio no `Set-Cookie`; daqui só aproveitamos o usuário da resposta
+    // O JWT veio no `Set-Cookie`; o token de CSRF vem no corpo (B20)
+    api.setCsrfToken(res.data.csrfToken);
     setUser(res.data.user);
     return res.data.user;
   };
@@ -73,6 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     role: string;
   }): Promise<User> => {
     const res = await api.post<AuthResponse>('/auth/register', data);
+    api.setCsrfToken(res.data.csrfToken);
     setUser(res.data.user);
     return res.data.user;
   };
@@ -81,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await api.post('/auth/logout');
     } catch { /* ignore */ }
+    api.clearCsrfToken();
     setUser(null);
   };
 

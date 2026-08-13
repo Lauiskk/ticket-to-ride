@@ -16,14 +16,13 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
-import { randomBytes } from 'crypto';
 import { Public } from '../shared/decorators/public.decorator';
 import { SkipCsrf } from '../shared/decorators/skip-csrf.decorator';
 import { CurrentUser } from '../shared/decorators/current-user.decorator';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { resolveFrontendUrl } from '../shared/config/frontend-url';
 import {
-  sessionCookieOptions,
+  issueSessionCookies,
   SESSION_COOKIE,
   CSRF_COOKIE,
 } from '../shared/config/session-cookie';
@@ -48,11 +47,12 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.register(dto);
-    this.setTokenCookie(res, result.accessToken);
+    const csrfToken = this.setTokenCookie(res, result.accessToken);
     return {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      csrfToken,
     };
   }
 
@@ -75,11 +75,12 @@ export class AuthController {
       };
     }
 
-    this.setTokenCookie(res, result.accessToken);
+    const csrfToken = this.setTokenCookie(res, result.accessToken);
     return {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      csrfToken,
     };
   }
 
@@ -94,8 +95,27 @@ export class AuthController {
    */
   @Get('me')
   @HttpCode(HttpStatus.OK)
-  async me(@CurrentUser() user: JwtPayload) {
-    return this.authService.getProfile(user.sub);
+  async me(
+    @CurrentUser() user: JwtPayload,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const profile = await this.authService.getProfile(user.sub);
+
+    /*
+      O token de CSRF acompanha o perfil (B20).
+
+      Esta rota é a primeira coisa que o site chama ao abrir, e é por ela que o
+      SPA descobre o token — já que o cookie legível pertence ao domínio da API
+      e o JavaScript do site não o alcança. Reaproveita o cookie existente
+      quando há um; só emite outro se ele tiver sumido, para não invalidar o
+      token que outra aba já esteja usando.
+    */
+    const existente = req.cookies?.[CSRF_COOKIE];
+    const csrfToken =
+      existente || issueSessionCookies(res, req.cookies?.[SESSION_COOKIE] ?? '', process.env.NODE_ENV);
+
+    return { ...profile, csrfToken };
   }
 
   @Post('logout')
@@ -118,11 +138,12 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.refresh(user.sub);
-    this.setTokenCookie(res, result.accessToken);
+    const csrfToken = this.setTokenCookie(res, result.accessToken);
     return {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      csrfToken,
     };
   }
 
@@ -140,32 +161,27 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.verify2FA(user.sub, dto.code);
-    this.setTokenCookie(res, result.accessToken);
+    const csrfToken = this.setTokenCookie(res, result.accessToken);
     return {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      csrfToken,
     };
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   /**
-   * Emite a sessão: o JWT num cookie que o JavaScript não lê, e o par de CSRF
-   * num cookie que ele lê de propósito (SPEC_CP20 RF-1, RF-5).
+   * Emite a sessão e devolve o token de CSRF para ir no corpo da resposta
+   * (SPEC_CP20 RF-1, RF-5 e B20).
    *
-   * Os dois saem sempre juntos — um cookie de sessão sem o par de CSRF deixaria
-   * a pessoa autenticada e incapaz de fazer qualquer mutação.
+   * O JWT vai num cookie que o JavaScript não lê. O par de CSRF vai num cookie
+   * legível **e** no corpo — porque em produção o site e a API estão em domínios
+   * diferentes, e `document.cookie` no site não enxerga cookie da API.
    */
-  private setTokenCookie(res: Response, token: string): void {
-    const nodeEnv = process.env.NODE_ENV;
-
-    res.cookie(SESSION_COOKIE, token, sessionCookieOptions(nodeEnv));
-    res.cookie(
-      CSRF_COOKIE,
-      randomBytes(32).toString('hex'),
-      sessionCookieOptions(nodeEnv, { readableByJs: true }),
-    );
+  private setTokenCookie(res: Response, token: string): string {
+    return issueSessionCookies(res, token, process.env.NODE_ENV);
   }
 
   // ─── Google OAuth ───────────────────────────────────────────────────────────

@@ -13,6 +13,11 @@ export interface AuthResponse {
   user: User;
   accessToken: string;
   refreshToken: string;
+  /**
+   * Par do cookie de CSRF, entregue no corpo porque em produção o cookie
+   * pertence ao domínio da API e o site não consegue lê-lo (SPEC_CP20 B20).
+   */
+  csrfToken: string;
 }
 
 // ─── Events ─────────────────────────────────────────────────────────────────
