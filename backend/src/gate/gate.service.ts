@@ -107,6 +107,23 @@ export class GateService {
       throw new AppError('Event not found', ErrorCodes.NOT_FOUND, 404);
     }
 
+    /*
+      Evento cancelado não abre portão (SPEC_CP23 RF-4).
+
+      O cancelamento já invalida os ingressos, então esta checagem é a segunda
+      barreira — mas ela existe porque a primeira depende de uma escrita ter dado
+      certo, e um portão não é lugar para depender de uma coisa só. A mensagem é
+      própria: dizer "fora do horário" para quem chegou num evento cancelado
+      manda a pessoa esperar por algo que não vai acontecer.
+    */
+    if (event.status === EventStatus.CANCELLED) {
+      throw new AppError(
+        'Este evento foi cancelado. Nenhum ingresso dá entrada.',
+        ErrorCodes.EVENT_NOT_ACTIVE,
+        400,
+      );
+    }
+
     if (!this.isEventActive(event)) {
       // CRITICAL (Req 11.7): Ticket status REMAINS UNCHANGED
       throw new EventNotActiveError(event.id);

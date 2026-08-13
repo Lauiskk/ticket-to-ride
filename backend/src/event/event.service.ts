@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { In, Repository, SelectQueryBuilder } from 'typeorm';
 import { Event, EventStatus, SeatingType } from './entities/event.entity';
 import { Seat, SeatStatus } from './entities/seat.entity';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -8,6 +8,8 @@ import { SearchEventsDto, SortBy } from './dto/search-events.dto';
 import { EventResponseDto } from './dto/event-response.dto';
 import { EventMetricsDto } from './dto/event-metrics.dto';
 import { Ticket, TicketStatus } from '../ticket/entities/ticket.entity';
+import { PaymentService } from '../payment/payment.service';
+import { ReservationGateway } from '../reservation/reservation.gateway';
 import { AppError, ErrorCodes } from '../shared/errors';
 import { PaginatedResult } from '../shared/interceptors/response.interceptor';
 
@@ -37,6 +39,9 @@ export class EventService {
     private readonly eventRepo: Repository<Event>,
     @InjectRepository(Seat)
     private readonly seatRepo: Repository<Seat>,
+    @Inject(forwardRef(() => PaymentService))
+    private readonly payments: PaymentService,
+    private readonly gateway: ReservationGateway,
   ) {}
 
   // ─── Create ─────────────────────────────────────────────────────────────────
@@ -99,17 +104,99 @@ export class EventService {
 
   // ─── Cancel ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Cancelar de verdade: devolve os lugares, invalida os ingressos e o dinheiro
+   * volta (SPEC_CP23).
+   *
+   * Isto aqui era `event.status = CANCELLED` com um TODO ao lado. O resto ficava
+   * onde estava: assentos vendidos seguiam vendidos, ingressos seguiam válidos —
+   * e seguiam **abrindo a portaria**, que olha a janela de entrada e não o
+   * status do evento — e o dinheiro seguia conosco. Para quem comprou, o evento
+   * era cancelado e nada acontecia.
+   *
+   * A mudança de estado é uma transação só (RNF-1): meio cancelamento, com
+   * assentos livres e ingressos ainda válidos, é pior que nenhum.
+   */
   async cancel(eventId: string, organizerId: string): Promise<EventResponseDto> {
     const event = await this.findOwnedEvent(eventId, organizerId);
 
-    // Cancel from ANY status (Req 5.7)
-    event.status = EventStatus.CANCELLED;
-    const saved = await this.eventRepo.save(event);
+    // AC-5: já cancelado é trabalho feito — não estorna de novo
+    if (event.status === EventStatus.CANCELLED) {
+      return EventResponseDto.fromEntity(event);
+    }
 
-    // TODO: Trigger refund for all paid reservations (Checkpoint 7)
-    this.logger.log(`Event ${eventId} cancelled — refund processing will be triggered`);
+    const queryRunner = this.seatRepo.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
 
-    return EventResponseDto.fromEntity(saved);
+    let releasedSeatIds: string[] = [];
+
+    try {
+      event.status = EventStatus.CANCELLED;
+      await queryRunner.manager.save(Event, event);
+
+      // Os lugares voltam ao estoque (RF-1)
+      await queryRunner.manager.update(
+        Seat,
+        { eventId, status: In([SeatStatus.SOLD, SeatStatus.RESERVED]) },
+        { status: SeatStatus.AVAILABLE },
+      );
+
+      // Os ingressos param de valer (RF-2). Esta é a barreira principal; a
+      // checagem na portaria é a segunda, não a única.
+      await queryRunner.manager.update(
+        Ticket,
+        { eventId, status: TicketStatus.ACTIVE },
+        { status: TicketStatus.INVALIDATED },
+      );
+
+      const seats = await queryRunner.manager.find(Seat, {
+        where: { eventId },
+        select: ['id'],
+      });
+      releasedSeatIds = seats.map((s) => s.id);
+
+      await queryRunner.commitTransaction();
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Falha ao cancelar o evento ${eventId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+
+    // Quem está com o mapa aberto vê os lugares voltarem (RF-5)
+    if (releasedSeatIds.length > 0) {
+      try {
+        this.gateway.broadcastSeatsReleased(eventId, releasedSeatIds);
+      } catch {
+        // Aviso ao vivo é melhoria; o estado já está correto no banco
+      }
+    }
+
+    /*
+      Estorno fora da transação, e depois do commit.
+
+      O cancelamento é a decisão do organizador e precisa valer na hora — é ele
+      que fecha a entrada e libera os assentos. O dinheiro é consequência, e é
+      retentável: cada estorno leva chave de idempotência na Stripe. Se a Stripe
+      estiver fora do ar, sobra uma reserva paga de evento cancelado, que aparece
+      no log e pode ser reprocessada. Visível, não silenciosa — e melhor do que
+      desfazer o cancelamento e deixar o evento à venda.
+    */
+    try {
+      await this.payments.refundReservationsForEvent(eventId);
+    } catch (error) {
+      this.logger.error(
+        `Evento ${eventId} cancelado, mas os estornos falharam — reprocessar`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+
+    return EventResponseDto.fromEntity(event);
   }
 
   // ─── Get by ID ──────────────────────────────────────────────────────────────

@@ -489,6 +489,83 @@ export class PaymentService {
     this.logger.log(`Payment ${payment.id} failed — reservation ${payment.reservationId} → payment_failed, seats released`);
   }
 
+  // ─── Estorno em massa por evento cancelado (SPEC_CP23 RF-3) ───────────────
+
+  /**
+   * Devolve o dinheiro de todas as reservas de um evento cancelado.
+   *
+   * Roda **depois** do commit do cancelamento, de propósito: estorno é chamada
+   * de rede, e mantê-la dentro da transação significaria segurar bloqueios do
+   * banco durante a latência da Stripe — além de abrir a janela em que o
+   * dinheiro volta e o commit falha, deixando um estorno que ninguém registrou.
+   *
+   * Idempotente em dois níveis: a reserva já `refunded` é pulada, e cada
+   * chamada à Stripe leva uma `idempotencyKey` derivada da reserva, então
+   * repetir a operação não devolve dinheiro duas vezes.
+   */
+  async refundReservationsForEvent(eventId: string): Promise<{
+    refunded: number;
+    failed: number;
+    cancelled: number;
+  }> {
+    const reservations = await this.reservationRepo.find({ where: { eventId } });
+
+    let refunded = 0;
+    let failed = 0;
+    let cancelled = 0;
+
+    for (const reservation of reservations) {
+      // Reserva pendente nunca cobrou nada: só deixa de existir
+      if (reservation.status === ReservationStatus.PENDING_PAYMENT) {
+        reservation.status = ReservationStatus.CANCELLED;
+        await this.reservationRepo.save(reservation);
+        cancelled += 1;
+        continue;
+      }
+
+      if (reservation.status !== ReservationStatus.PAID) continue;
+
+      try {
+        await this.refundPaidReservation(reservation);
+        refunded += 1;
+      } catch (error) {
+        // Uma falha não pode interromper as outras devoluções: cada reserva é
+        // independente, e parar no meio deixaria metade dos clientes sem
+        // dinheiro e sem registro.
+        failed += 1;
+        this.logger.error(
+          `Estorno falhou para a reserva ${reservation.id} do evento ${eventId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Evento ${eventId} cancelado: ${refunded} estornadas, ${cancelled} pendentes canceladas, ${failed} falhas`,
+    );
+
+    return { refunded, failed, cancelled };
+  }
+
+  private async refundPaidReservation(reservation: Reservation): Promise<void> {
+    const payment = await this.paymentRepo.findOne({
+      where: { reservationId: reservation.id, status: PaymentStatus.SUCCEEDED },
+    });
+
+    // Modo simulado ou pagamento que nunca chegou à Stripe: não há o que
+    // estornar lá fora, mas o estado local ainda precisa fechar.
+    if (payment && this.hasRealStripeKey() && payment.stripePaymentIntentId) {
+      await this.stripe.refunds.create(
+        { payment_intent: payment.stripePaymentIntentId },
+        { idempotencyKey: `refund-${reservation.id}` },
+      );
+    }
+
+    reservation.status = ReservationStatus.REFUNDED;
+    await this.reservationRepo.save(reservation);
+  }
+
   // ─── Webhook Signature Verification ───────────────────────────────────────
 
   /**
