@@ -60,7 +60,11 @@ export function useTicketSocket(eventIds: (string | undefined)[]): { connected: 
       const markUsed = (ticket: Ticket): Ticket =>
         ticket.id === ticketId ? { ...ticket, status: 'used', validatedAt } : ticket;
 
-      queryClient.setQueryData<Ticket[]>(['my-tickets'], (current) => current?.map(markUsed));
+      // A chave da lista termina com o id do dono (SPEC_CP24 RF-3); casar por
+      // prefixo alcança a lista de quem estiver logado sem precisar sabê-lo.
+      queryClient.setQueriesData<Ticket[]>({ queryKey: ['my-tickets'] }, (current) =>
+        current?.map(markUsed),
+      );
       queryClient.setQueryData<Ticket>(['ticket', ticketId], (current) =>
         current ? markUsed(current) : current,
       );

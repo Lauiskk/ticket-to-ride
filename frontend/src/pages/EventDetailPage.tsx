@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GiTicket } from 'react-icons/gi';
 import { useEventDetail, useAvailableSeats } from '../hooks/useEvents';
 import { useSeatSocket } from '../hooks/useSeatSocket';
@@ -39,6 +39,7 @@ function reserveErrorMessage(err: { code?: string; statusCode?: number }): strin
 export function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { data: event, isLoading: loadingEvent, isError } = useEventDetail(id);
   const { data: seats, isLoading: loadingSeats, refetch: refetchSeats } = useAvailableSeats(id);
@@ -306,6 +307,28 @@ export function EventDetailPage() {
             expiresAt={reservationData.expiresAt}
             onSuccess={() => {
               setReservationData(null);
+
+              /*
+                O cache é de antes da compra (SPEC_CP24 RF-1 e RF-2).
+
+                Quando o modal diz "Ingresso garantido", o ingresso já existe no
+                banco — o checkout só sai de `settling` quando o servidor para de
+                responder `ticketsPending`. Mas o `QueryClient` nasce com
+                `staleTime` de 5 minutos: para quem tinha aberto "Meus ingressos"
+                antes de comprar, a lista velha era considerada *fresca* e o
+                React Query nem refazia a busca em segundo plano. O ingresso
+                aparecia cinco minutos depois, ou quando a pessoa recarregava.
+
+                `removeQueries` em vez de `invalidateQueries` de propósito: a
+                lista não está montada agora, e invalidar só a marcaria como
+                velha. Apagando, a tela seguinte abre carregando e mostra a
+                resposta certa de uma vez, em vez de piscar a lista sem o
+                ingresso que a pessoa acabou de comprar.
+              */
+              queryClient.removeQueries({ queryKey: ['my-tickets'] });
+              queryClient.invalidateQueries({ queryKey: ['seats', id] });
+              queryClient.invalidateQueries({ queryKey: ['event', id] });
+
               navigate('/my-tickets');
             }}
             onCancel={handleCancelCheckout}

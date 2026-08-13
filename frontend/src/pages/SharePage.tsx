@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GiTicket } from 'react-icons/gi';
 import { api } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
@@ -49,6 +49,7 @@ const RECUSA: Record<Exclude<SharePreview['status'], 'active'>, { titulo: string
 export function SharePage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user, isLoading: loadingUser } = useAuth();
 
   const [accepting, setAccepting] = useState(false);
@@ -69,6 +70,10 @@ export function SharePage() {
     setError('');
     try {
       await api.post(`/sharing/${token}/accept`);
+      // A segunda porta pela qual um ingresso nasce (SPEC_CP24 RF-1). A lista em
+      // cache é de antes da transferência; sem isto, quem recebe o ingresso vai
+      // parar numa tela que ainda não sabe dele.
+      queryClient.removeQueries({ queryKey: ['my-tickets'] });
       navigate('/my-tickets', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Não foi possível aceitar este ingresso.');

@@ -5,12 +5,23 @@ import { useQuery } from '@tanstack/react-query';
 import QRCode from 'react-qr-code';
 import { GiTicket } from 'react-icons/gi';
 import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 import { useTicketSocket } from '../hooks/useTicketSocket';
 import type { Ticket } from '../types';
 
 export function MyTicketsPage() {
+  const { user } = useAuth();
+
+  /*
+    A chave carrega o dono (SPEC_CP24 RF-3).
+
+    "Meus ingressos" é uma pergunta cuja resposta depende de quem pergunta, e o
+    servidor responde pelo cookie — que é do navegador inteiro, não desta aba.
+    Com a chave genérica, entrar com outra conta em outra aba fazia esta exibir
+    a lista da conta errada até o cache envelhecer sozinho.
+  */
   const { data: tickets, isLoading, isError, refetch } = useQuery({
-    queryKey: ['my-tickets'],
+    queryKey: ['my-tickets', user?.id],
     queryFn: async () => {
       const res = await api.get<Ticket[]>('/tickets');
       return res.data;
