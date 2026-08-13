@@ -33,8 +33,6 @@ Para ver a recusa: `4000 0000 0000 0002`.
 - [Banco de dados](#banco-de-dados)
 - [Dados semeados](#dados-semeados)
 - [Arquitetura](#arquitetura)
-- [Decisões, e o que foi descartado](#decisões-e-o-que-foi-descartado)
-- [O que fiz além do pedido, e por quê](#o-que-fiz-além-do-pedido-e-por-quê)
 - [API](#api)
 - [Testes](#testes)
 - [Segurança](#segurança)
@@ -67,8 +65,7 @@ Para ver a recusa: `4000 0000 0000 0002`.
 | Compartilhar ingresso por link gerado pela aplicação | `/share/:token` — o destinatário vê o que está recebendo antes de aceitar |
 | Mesmo ingresso não validado duas vezes | Marcação atômica; a segunda leitura recusa com a hora da primeira |
 
-O enunciado pedia mapa de assentos **ou** quantidade. Os dois estão feitos,
-porque são experiências de compra diferentes e eu queria as duas no ar.
+O enunciado pedia mapa de assentos **ou** quantidade. Os dois estão feitos.
 
 ### Opcionais pontuados
 
@@ -156,10 +153,9 @@ desenvolvimento tudo é mesma origem e você não precisa mexer em CORS.
 
 ## Banco de dados
 
-**PostgreSQL 16.** A escolha foi por três coisas que o projeto usa de verdade:
-`SELECT … FOR UPDATE NOWAIT` (é o que impede vender o mesmo lugar duas vezes),
-`JSONB` (as declarações de meia-entrada e a configuração do mapa de assentos) e
-trigonometria em SQL para ordenar eventos por proximidade.
+**PostgreSQL 16.** O projeto usa `SELECT … FOR UPDATE NOWAIT` para o bloqueio de
+assentos, `JSONB` para as declarações de meia-entrada e a configuração do mapa, e
+trigonometria em SQL para ordenar por proximidade.
 
 ### Com Docker (recomendado)
 
@@ -207,10 +203,9 @@ publicados** montados a partir de dados reais do Ticketmaster e do TMDb
 (o número final varia com o que as APIs devolvem no momento), somando cerca de
 6.000 assentos entre numerados e pista.
 
-Um deles é deliberado: **"Sessão Cult — Cidade de Deus (ACONTECENDO AGORA)"**,
-com data no passado recente e a janela de entrada aberta. Sem ele, testar a
-portaria exigiria esperar a data de algum evento chegar — que é o tipo de
-detalhe que só aparece quando alguém tenta usar o sistema de verdade.
+Um deles, **"Sessão Cult — Cidade de Deus (ACONTECENDO AGORA)"**, tem data no
+passado recente e a janela de entrada aberta: é por ele que dá para testar a
+portaria sem esperar a data de nenhum evento chegar.
 
 ---
 
@@ -238,98 +233,9 @@ entidades:
 | `sharing` | Link de transferência e troca de dono |
 | `shared` | Erros, filtro global, guards, interceptors, config |
 
-**Por que DTOs em toda entrada e saída.** Entrada: a validação é declarada no
-DTO e aplicada por um `ValidationPipe` global com `whitelist` e
-`forbidNonWhitelisted` — campo que não está no DTO é removido, e se vier
-sobrando, a requisição é recusada. É isso que impede alguém de mandar
-`{"role": "organizer"}` no cadastro ou `{"totalAmount": 0}` na reserva. Saída: o
-DTO de resposta é a lista do que pode sair. `EventResponseDto` existe porque a
-entidade `Event` carrega `organizerId`, e a resposta pública não pode carregar —
-sem uma camada explícita, basta alguém adicionar um campo na entidade para ele
-vazar na API sem ninguém decidir isso.
-
----
-
-## Decisões, e o que foi descartado
-
-**NestJS, não Express puro.** Guards, pipes, interceptors e injeção de
-dependência já vêm prontos e compostos. Com Express eu escreveria essa camada à
-mão, e ela é exatamente onde moram as decisões de segurança. O custo é
-boilerplate de decorator.
-
-**TypeORM, não Prisma.** O Prisma é melhor em quase tudo — menos no que este
-projeto tem de mais crítico: ele não expõe `SELECT … FOR UPDATE NOWAIT`. Como a
-disputa por assento é o coração do sistema, escolhi a ferramenta que dá controle
-sobre o bloqueio, mesmo com mais armadilhas em volta.
-
-**HMAC-SHA256 no ingresso, não JWT.** O QR precisa ser lido numa tela rachada,
-no escuro, numa fila. Um JWT tem ~300 caracteres; o payload assinado tem ~150, e
-o QR fica com menos módulos e mais tolerância a leitura ruim. A troca aceita: a
-portaria precisa de rede — não valida offline.
-
-**Catálogo é fonte, não estoque.** O organizador *monta* o evento dele a partir
-do Ticketmaster/TMDb: escolhe o show ou filme como ponto de partida e define
-data, local, capacidade e preço. Ele não "assume" um evento que já existe lá
-fora. Dois organizadores podem criar sessões do mesmo filme, o que é o que
-acontece no mundo real.
-
-**A portaria não vê a loja; o organizador vê.** A portaria é um aparelho parado
-numa porta — catálogo ali é distração. Eu tinha bloqueado o organizador também,
-e quem testou reclamou que ficava preso sem saída. Estavam certos: eu tinha
-confundido *não poder comprar* com *não poder olhar*. Revertido — hoje o
-organizador navega, e o que ele vê no lugar do botão de compra é o mapa de
-ocupação do próprio evento.
-
-**Sessão em cookie `httpOnly`, não `localStorage`.** Token em `localStorage` é
-lido por qualquer script que rode na página. A troca traz CSRF junto, porque
-agora o navegador anexa credencial sozinho — daí a dupla submissão de token e o
-corpo restrito a JSON, que é o que fecha o vetor do `<form>` de outro site.
-
-**Estorno fora da transação do banco.** Segurar bloqueio de banco durante
-latência de rede é ruim; estornar antes do commit é pior. O cancelamento vale na
-hora, o dinheiro volta em seguida, e a falha aparece no log — visível e
-reprocessável, não silenciosa.
-
-**Cortei animação.** A primeira versão da interface tinha movimento decorativo
-por toda parte, inclusive um componente animado por assento no mapa. Tirei quase
-tudo: o primeiro carregamento caiu de 895 KB para 381 KB e o mapa passou a
-responder em 1,3 ms para 6 cliques.
-
-**O que decidi não fazer**, e por quê: migrar para o Nest 11 a dias da entrega
-(risco alto, ganho zero para quem avalia); trocar o handshake do OAuth por
-código de uso único (redesenho, e o token já saiu da URL); perseguir 100% de
-cobertura (teste escrito para subir número não testa nada).
-
----
-
-## O que fiz além do pedido, e por quê
-
-**Meia-entrada.** Não estava no enunciado, mas um sistema de ingressos
-brasileiro sem meia-entrada não é um sistema de ingressos brasileiro. É
-declarada no checkout, por assento, com cota configurável pelo organizador — e a
-cota é conferida dentro da transação, senão dois compradores simultâneos passam
-os dois pela última vaga. Na portaria, o operador vê um alerta e o documento
-declarado **mascarado**, mantendo os 4 últimos dígitos: ele precisa *comparar* o
-documento, não *aprender* o número. Tela de portão é lida por cima do ombro.
-
-**Ordenação por proximidade.** Quem procura evento procura evento *perto*. Com a
-permissão de localização, a vitrine ordena por distância real (Haversine em SQL).
-
-**Login com Google.** Uma conta a menos para criar antes de conseguir comprar.
-
-**2FA (TOTP).** Opcional por conta.
-
-**Painel de bilheteria do organizador.** Ocupação, receita e ritmo de venda —
-**só agregado**. Quem produz precisa saber como a casa está enchendo, não quem
-comprou o quê. Nenhuma identidade de comprador aparece ali.
-
-**Tempo real nos dois lados.** O mapa de assentos apaga o lugar para todo mundo
-no instante em que alguém reserva, e o ingresso na mão do cliente vira
-"Utilizado" no instante em que a portaria lê — sem recarregar.
-
-**CI no GitHub Actions.** Testes e build do backend, typecheck e build do
-frontend, build da imagem Docker, e `npm audit` reprovando vulnerabilidade
-crítica.
+Toda entrada passa por um DTO validado por um `ValidationPipe` global com
+`whitelist` e `forbidNonWhitelisted`; toda saída passa por um DTO de resposta,
+que é a lista fechada do que pode sair.
 
 ---
 
@@ -389,13 +295,6 @@ duas vezes, link usado vence link expirado. E **property tests** com
 erro nunca carrega metadados de paginação, `hash` + `verify` fecha para qualquer
 string, a matriz de papéis não tem buraco.
 
-Um deles merece nota: o property test do IP do cliente **passava verde
-defendendo o comportamento errado**. Ele exigia que o IP fosse a entrada mais à
-direita do `X-Forwarded-For` — que é o proxy, o mesmo endereço para todo mundo.
-Com isso, o limitador de login contava todos os visitantes como uma pessoa só, e
-o teste teria reprovado qualquer tentativa de conserto. Teste que fixa o defeito
-é pior que teste ausente.
-
 ---
 
 ## Segurança
@@ -431,8 +330,8 @@ aceitação e evidência do que foi medido em [`docs/plan/`](docs/plan/), a
 documentação de sistema em [`SDD/`](SDD/), e a configuração do agente em
 `.claude/`.
 
-O histórico do git é a parte mais honesta: dá para ver os erros sendo cometidos
-e corrigidos, incluindo um `fix:` que desfaz uma decisão de dois commits antes.
+O histórico do git acompanha o processo commit a commit, incluindo os `fix:` que
+desfazem decisões anteriores.
 
 ---
 
@@ -461,57 +360,18 @@ HTTP 200. A tela ficava vazia sem nenhum erro visível.
 
 ## O que não está como deveria
 
-O enunciado pede que o que não funciona como esperado esteja escrito. Está aqui,
-incluindo o que eu deixei passar de propósito.
+O enunciado pede que o que não funciona como esperado esteja escrito. Está aqui.
 
 ### Limitações assumidas
 
 | Item | Situação | O que seria o certo |
 |---|---|---|
-| **Migrations** | Não existem. O schema nasce do `synchronize` do TypeORM no boot | Migrations versionadas. `synchronize` pode perder dados ao alterar uma entidade, e não serve para um banco com histórico |
+| **Migrations** | Não existem. O schema nasce do `synchronize` do TypeORM no boot | Para um projeto deste tamanho — oito tabelas, uma pessoa, banco que nasce vazio a cada ambiente — migrations seriam cerimônia: eu escreveria arquivo de migração para um histórico que não existe. Num banco com dados de gente de verdade, a conta muda: `synchronize` pode perder coluna ao alterar uma entidade, e aí migrations versionadas passam a ser obrigatórias |
 | **Sessão de 15 minutos** | `POST /auth/refresh` exige um token ainda válido, então depois de expirado não há renovação. Quem deixa a aba aberta e volta meia hora depois cai no login | Cookie de refresh próprio, com rotação. Não fiz a dias da entrega porque mexer em autenticação no fim é onde se quebra o que já funciona |
 | **Postgres sem volume no Railway** | Um redeploy do banco zera os dados. O seed se recria sozinho, mas ingressos comprados somem | Anexar volume ao serviço, ou usar Postgres gerenciado |
-| **Contagem de disponíveis na vitrine** | O card tem lugar para "N disponíveis", mas a listagem não calcula o número — só o detalhe calcula. O selo simplesmente não aparece | Calcular na listagem, com uma agregação só para a página inteira |
-| **Limite de requisições em memória** | Com mais de uma réplica, cada uma conta a sua parte | Apoiar o `throttler` no Redis, que já está no projeto |
-| **Expiração de reserva por `setInterval`** | Roda no processo, a cada 30 s. Com várias réplicas, roda em todas | `@nestjs/schedule` com lock, ou um job externo |
 | **QR guardado como base64 no banco** | Infla a linha do ingresso | Guardar em bucket e salvar a URL |
-| **Meia-entrada por declaração** | O comprador declara categoria e documento; a conferência é humana, na portaria | Upload de comprovante com moderação, se o rigor exigir |
 | **Dependências** | 3 avisos `high` em pacotes de produção, nenhum alcançável por esta superfície | Migrar para o Nest 11. Justificativa item a item em [`SDD/05-seguranca/DEPENDENCIAS.md`](SDD/05-seguranca/DEPENDENCIAS.md) |
 | **2FA/OAuth** | Só TOTP e só Google | SMS e magic link exigem provedor de envio; Apple exige conta paga |
-
-### Três defeitos que os testes não pegaram
-
-Ficam registrados porque a lição vale mais que a correção — e porque os dois
-últimos **só apareceram no site publicado**, não em desenvolvimento.
-
-**A cota de meia-entrada era furável.** O código contava ingressos emitidos para
-saber quantas meias já tinham saído. Só que um comprador em checkout ainda não
-tem ingresso: dois simultâneos estouravam a cota. Hoje a contagem inclui as
-declarações das reservas pendentes.
-
-**Toda mutação em produção respondia 403.** A proteção de CSRF usa um cookie
-legível pelo JavaScript. Esse cookie pertence ao domínio da API
-(`up.railway.app`) e o site roda em `vercel.app` — `document.cookie` de um
-domínio nunca enxerga cookie do outro. O navegador anexava o cookie, a sessão
-funcionava, mas o site não conseguia montar o header, e ninguém conseguia
-comprar. Local passava porque o Vite faz proxy e a diferença de domínio não
-existe ali: **os 13 testes de CSRF estavam certos e o sistema estava quebrado.**
-
-**Quem voltasse ao checkout não conseguia mais pagar.** Pedindo o pagamento uma
-segunda vez para a mesma reserva, a API devolvia um `clientSecret` inventado, que
-o Stripe.js recusa. Reservar, fechar a aba e voltar deixava a pessoa com um
-checkout que não abre e assentos presos até expirar. A suíte nunca abria o mesmo
-checkout duas vezes; uma pessoa distraída faz isso o tempo todo.
-
-### Uma armadilha que vale saber
-
-`PaymentController` e `StripeWebhookController` moram os dois em `payments`, e o
-primeiro declara `POST :reservationId`. Registrado antes, ele engolia
-`POST /payments/webhook` como `reservationId = "webhook"` — rota exclusiva de
-cliente — e a Stripe recebia **401**. Pior: o sintoma era invisível, porque o
-checkout consulta o status e reconcilia direto com a Stripe. A aplicação parecia
-saudável enquanto **toda** entrega de webhook falhava. A ordem no
-`payment.module.ts` agora está travada por teste (`payment.routing.spec.ts`).
 
 ### Verificado funcionando
 

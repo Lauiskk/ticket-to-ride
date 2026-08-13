@@ -1,8 +1,9 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard, ThrottlerStorage } from '@nestjs/throttler';
+import { RedisThrottlerStorage } from './shared/throttler/redis-throttler.storage';
 import { SharedModule } from './shared/shared.module';
 import { AuthModule } from './auth/auth.module';
 import { EventModule } from './event/event.module';
@@ -44,9 +45,15 @@ import { getTypeOrmConfig } from './shared/config/typeorm.config';
       Este é o teto folgado, que não incomoda uso normal; as rotas que doem têm
       limites próprios, mais apertados, declarados nelas.
     */
-    ThrottlerModule.forRoot([
-      { name: 'default', ttl: 60_000, limit: 120 },
-    ]),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        throttlers: [{ name: 'default', ttl: 60_000, limit: 120 }],
+        // A contagem vive no Redis: em memória, cada réplica conta a sua parte
+        // e o teto passa a depender de quantas cópias estão no ar.
+        storage: new RedisThrottlerStorage(configService),
+      }),
+    }),
     SharedModule,
     AuthModule,
     EventModule,

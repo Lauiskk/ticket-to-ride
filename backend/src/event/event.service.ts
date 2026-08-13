@@ -343,9 +343,40 @@ export class EventService {
       .take(pageSize)
       .getMany();
 
-    const items = events.map((e) => EventResponseDto.fromEntity(e));
+    const disponiveis = await this.countAvailableSeats(events.map((e) => e.id));
+    const items = events.map((e) =>
+      EventResponseDto.fromEntity(e, disponiveis.get(e.id) ?? 0),
+    );
 
     return { data: items, total, page, pageSize };
+  }
+
+  /**
+   * Quantos lugares ainda estão à venda em cada evento da página.
+   *
+   * Uma agregação só para a página inteira, não uma consulta por card: com 20
+   * eventos por página, o caminho ingênuo custa 20 idas ao banco para desenhar
+   * uma lista. O card escondia o número porque a listagem simplesmente não o
+   * calculava — só o detalhe calculava.
+   */
+  private async countAvailableSeats(eventIds: string[]): Promise<Map<string, number>> {
+    const porEvento = new Map<string, number>();
+    if (eventIds.length === 0) return porEvento;
+
+    const linhas = await this.seatRepo
+      .createQueryBuilder('seat')
+      .select('seat.eventId', 'eventId')
+      .addSelect('COUNT(*)', 'total')
+      .where('seat.eventId IN (:...eventIds)', { eventIds })
+      .andWhere('seat.status = :status', { status: SeatStatus.AVAILABLE })
+      .groupBy('seat.eventId')
+      .getRawMany<{ eventId: string; total: string }>();
+
+    for (const linha of linhas) {
+      porEvento.set(linha.eventId, Number(linha.total));
+    }
+
+    return porEvento;
   }
 
   private async findOwnedEvent(eventId: string, organizerId: string): Promise<Event> {
