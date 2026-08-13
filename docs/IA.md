@@ -47,7 +47,25 @@ cabeçalho — que é o proxy. Ele passava verde enquanto o limitador de login
 contava todos os visitantes como uma pessoa só, e teria reprovado qualquer
 tentativa de conserto.
 
-Nenhum desses aparece rodando a suíte. Todos apareceram usando o sistema.
+**Toda mutação em produção respondia 403.** A proteção de CSRF usa um cookie
+legível pelo JavaScript. Só que esse cookie pertence ao domínio da **API**
+(`up.railway.app`) e o site roda em `vercel.app` — `document.cookie` de um
+domínio nunca enxerga cookie do outro. O navegador anexava o cookie nas
+requisições (a sessão funcionava, o `/auth/me` respondia 200), mas o site não
+conseguia montar o header. Ninguém conseguia comprar. Local passava porque o
+Vite faz proxy de `/api` e a diferença de domínio simplesmente não existe ali:
+**os 13 testes de CSRF estavam certos e o sistema estava quebrado**.
+
+**Quem voltasse ao checkout não conseguia mais pagar.** Pedindo o pagamento uma
+segunda vez para a mesma reserva, a API devolvia `clientSecret: "reuse_pi_…"` —
+uma string inventada, que o Stripe.js recusa de imediato. Na prática: reservar,
+fechar a aba, voltar para pagar, e encontrar um checkout que não abre, com os
+assentos presos até expirar. A suíte nunca abria o mesmo checkout duas vezes;
+uma pessoa distraída faz isso o tempo todo.
+
+Nenhum desses aparece rodando a suíte. Todos apareceram usando o sistema — e os
+dois últimos só apareceram no **site publicado**, porque dependem da topologia
+de dois domínios e do comportamento de quem usa, não do código isolado.
 
 ## O que eu decidi, e a IA executou
 

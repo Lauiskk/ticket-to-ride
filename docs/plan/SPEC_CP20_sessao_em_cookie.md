@@ -105,6 +105,37 @@ Ou seja, quem chegasse na vitrine pública sem conta era expulso dela.
 - RF-7: `/auth/me` é chamado com `allowAnonymous`: 401 ali é resposta legítima,
   não sessão expirada, e não dispara renovação nem redirecionamento.
 
+## Achado em produção — B20
+
+Depois do deploy, **toda mutação no site publicado respondia 403**. Ninguém
+conseguia comprar.
+
+O cookie de CSRF é legível pelo JavaScript — de propósito, é metade da dupla
+submissão. Mas ele pertence ao domínio da **API** (`up.railway.app`), e o site
+roda em `vercel.app`. O navegador anexa esse cookie nas requisições
+credenciadas — por isso a sessão funcionava e o `/auth/me` respondia 200 — mas
+`document.cookie` de um domínio **nunca** enxerga cookie de outro. O SPA não
+conseguia montar o header, e o guard fazia exatamente o que deveria: recusar.
+
+Local não pegava: o Vite faz proxy de `/api`, então tudo é mesma origem. Os 13
+testes de CSRF estavam corretos e o sistema estava quebrado — o defeito mora na
+topologia, não no código isolado.
+
+- RF-8: O token de CSRF viaja **também no corpo** das respostas de autenticação
+  (`login`, `register`, `refresh`, `2fa/verify` e `/auth/me`), e o cliente o
+  guarda em memória. A dupla submissão continua íntegra: de outra origem não se
+  lê o corpo (CORS) nem o cookie.
+- RF-9: `/auth/me` **reaproveita** o cookie existente em vez de emitir outro —
+  emitir invalidaria o token que outra aba já estivesse usando.
+- RF-10: A renovação de sessão atualiza o token em memória; sem isso a primeira
+  mutação depois do refresh levaria o valor velho.
+
+| Verificação | Resultado |
+|---|---|
+| `POST /reservations` no site publicado, antes | **403** `CSRF_TOKEN_INVALID` |
+| Depois da correção, reserva pela interface | modal de pagamento abre, sem erro de origem ✔ |
+| `csrfToken` no corpo do `/auth/me` | presente, igual ao cookie ✔ |
+
 ## Status
 - [x] Spec escrita
 - [x] Testes escritos — vermelhos (13 ACs de cookie e CSRF)

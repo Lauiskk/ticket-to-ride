@@ -536,6 +536,25 @@ aplicação parecia saudável enquanto **toda** entrega de webhook falhava.
 A ordem em `payment.module.ts` agora é obrigatória e está travada por teste
 (`payment.routing.spec.ts`).
 
+### Duas armadilhas que só existem em produção
+
+Ambas passavam em 160 testes e apareceram abrindo o **site publicado**. Ficam
+registradas porque a lição vale mais que a correção.
+
+**Cookie de CSRF que o site não alcança.** A proteção usa um cookie legível pelo
+JavaScript, mas ele pertence ao domínio da API (`up.railway.app`) e o site roda
+em `vercel.app` — `document.cookie` de um domínio nunca enxerga cookie do outro.
+O navegador anexava o cookie (a sessão funcionava), o site não conseguia montar o
+header, e **toda mutação respondia 403**. Local não pega: o Vite faz proxy e a
+diferença de domínio some. O token passou a viajar também no corpo da resposta de
+autenticação.
+
+**Checkout reaberto que nunca mais paga.** Pedindo o pagamento de novo para a
+mesma reserva, a API devolvia `clientSecret: "reuse_pi_…"` — string inventada que
+o Stripe.js recusa. Reservar, fechar a aba e voltar deixava a pessoa com um
+checkout que não abre e assentos presos até expirar. Agora o intent é buscado na
+Stripe e o `client_secret` real é devolvido.
+
 ### Verificado e funcionando
 
 Pagamento real na Stripe (`4242…` aprova, `4000…0002` recusa) com webhook emitindo o
