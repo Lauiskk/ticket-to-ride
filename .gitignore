@@ -21,4 +21,9 @@ Thumbs.db
 # Scratch de execucao local
 backend/_*.txt
 frontend/tsconfig.tsbuildinfo
-.claude/
+
+# `.claude/` é versionado de propósito: o desafio pede para versionar os
+# artefatos de contexto usados com IA. O que fica de fora é só o que é da
+# máquina ou da sessão.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

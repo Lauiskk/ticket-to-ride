@@ -14,8 +14,16 @@ Uma plataforma completa de eventos e ingressos onde organizadores publicam event
 - [Endpoints da API](#endpoints-da-api)
 - [Checkpoints](#checkpoints)
 - [Testes](#testes)
+- [Segurança](#segurança)
+- [Uso de IA](#uso-de-ia)
 - [Deploy](#deploy)
 - [Tradeoffs e Limitações](#tradeoffs-e-limitações)
+
+> **Para avaliar rápido:** o processo está em [`docs/plan/`](docs/plan/) — uma
+> spec por checkpoint, cada uma com os critérios de aceitação e a tabela do que
+> foi **medido** na validação. Como a IA foi usada (e onde ela errou) está em
+> [`docs/IA.md`](docs/IA.md). O modelo de ameaças está em
+> [`SDD/05-seguranca/`](SDD/05-seguranca/).
 
 ---
 
@@ -288,8 +296,48 @@ npx jest --testPathPattern "nome-do-arquivo"
 
 - **P1**: Error responses sempre têm `{message, code, statusCode}`, nunca pagination metadata
 - **P6**: `hash(password)` + `verify(password, hash)` = true para qualquer string
-- **P9**: Rightmost IP do X-Forwarded-For é extraído corretamente
+- **P9**: O IP do cliente é `req.ip` — nunca o proxy à direita do `X-Forwarded-For`
 - **P11**: Matriz RBAC (Gate só valida, Organizer bloqueado de Client endpoints)
+
+> A P9 valia o contrário até o CP21, e passava verde defendendo o comportamento
+> errado. O caso está contado em [`docs/IA.md`](docs/IA.md) — teste que fixa o
+> defeito é pior que teste ausente, porque reprova quem tenta consertar.
+
+---
+
+## Segurança
+
+Resumo do que existe; o raciocínio completo está em
+[`SDD/05-seguranca/MODELO_DE_AMEACAS.md`](SDD/05-seguranca/MODELO_DE_AMEACAS.md).
+
+| Ameaça | Defesa |
+|---|---|
+| Entrar sem pagar | QR assinado com HMAC-SHA256, conferido antes de qualquer consulta; validação marca `used`; evento cancelado não abre portão |
+| Mesmo lugar vendido duas vezes | `SELECT … FOR UPDATE NOWAIT` em transação; contenção real distinguida de falha de infraestrutura |
+| Roubo de sessão | JWT em cookie `httpOnly` (15 min) + CSRF de dupla submissão + corpo só JSON + CORS com lista fechada |
+| Força bruta | 5 falhas/15 min por IP → bloqueio de 30 min, com o IP do cliente de verdade |
+| Injeção | SQL sempre parametrizado; DTOs com `whitelist` + `forbidNonWhitelisted`; sem `eval`, sem `child_process`, sem `dangerouslySetInnerHTML` |
+| Vazamento de dados | 404 anti-enumeração; métricas só agregadas; documento mascarado na portaria; sala do WebSocket só com ids |
+| Abuso e cota externa | Limite por rota em cadastro, reserva, portaria e catálogo (protege a cota de 5.000/dia do Ticketmaster) |
+
+O CI reprova se entrar dependência de produção com vulnerabilidade **crítica**.
+As três `high` que restam estão nomeadas e justificadas em
+[`SDD/05-seguranca/DEPENDENCIAS.md`](SDD/05-seguranca/DEPENDENCIAS.md).
+
+---
+
+## Uso de IA
+
+O relato completo — ferramentas, em que partes, o que foi feito sem IA e as
+vezes em que a validação real reprovou o que a ferramenta tinha proposto — está
+em **[`docs/IA.md`](docs/IA.md)**.
+
+Em resumo: o Claude Code escreveu a maior parte das linhas, sempre sob o fluxo
+*spec → teste vermelho → implementação → validação real com dado de verdade*
+descrito em [`AGENTS.md`](AGENTS.md). Os artefatos do processo estão versionados
+junto: 11 specs em [`docs/plan/`](docs/plan/), a documentação de sistema em
+[`SDD/`](SDD/), o contrato operacional em [`CLAUDE.md`](CLAUDE.md) e a
+configuração do agente em `.claude/`.
 
 ---
 
@@ -463,7 +511,9 @@ gh secret set VERCEL_PROJECT_ID  # idem
 |---|---|---|
 | `DB_SYNCHRONIZE` | Cria o schema a partir das entidades. Não há migrations. | Migrations versionadas; `synchronize` pode perder dados ao alterar uma entidade |
 | Postgres e Redis no Railway | Containers `postgres:16-alpine` e `redis:7-alpine` **sem volume** | Um redeploy zera o banco. Como `RUN_SEED_ON_BOOT` está ligado, ele se recria sozinho — mas ingressos comprados somem. Para valer: anexar volume ou usar o Postgres gerenciado |
-| Reembolso ao cancelar evento | Só registra log | Chamar `refunds.create` na Stripe para cada reserva paga |
+| Estorno ao cancelar evento | **Implementado** (CP23): assentos voltam, ingressos são invalidados e a Stripe estorna | O estorno roda **depois** do commit do cancelamento. Se a Stripe estiver fora, sobra reserva paga de evento cancelado — registrada em log, reprocessável, não silenciosa |
+| Token do OAuth na URL | O callback já não leva token nem usuário na query string; a sessão vai no cookie | O ideal seria código de uso único trocado por sessão num POST — redesenho do handshake, fora do escopo desta entrega |
+| Dependências | 3 avisos `high` em pacotes de produção, nenhum alcançável por esta superfície | Migrar para o Nest 11. Justificativa item a item em `SDD/05-seguranca/DEPENDENCIAS.md` |
 | Scheduler de expiração | `setInterval` de 30 s no processo | `@nestjs/schedule`; com múltiplas réplicas hoje rodaria em todas |
 | QR no banco | PNG em base64 na coluna | Guardar em bucket e salvar a URL |
 | Meia-entrada | Declaração + documento conferido na portaria | Upload de comprovante com moderação, se o rigor exigir |
@@ -491,8 +541,14 @@ A ordem em `payment.module.ts` agora é obrigatória e está travada por teste
 Pagamento real na Stripe (`4242…` aprova, `4000…0002` recusa) com webhook emitindo o
 ingresso · assentos atualizando ao vivo por WebSocket · portaria devolvendo válido /
 já utilizado / evento errado / fora do horário · meia-entrada com cota transacional e
-documento mascarado · catálogo trazendo 56 shows no Brasil e 135 filmes em cartaz.
-Detalhe de cada validação em `docs/plan/SPEC_CP1*.md`.
+documento mascarado · catálogo trazendo 56 shows no Brasil e 135 filmes em cartaz ·
+**compartilhamento entre duas contas** (cliente A envia, cliente B recebe, o de A é
+invalidado) · **cancelamento devolvendo 6 de 6 assentos**, invalidando o ingresso,
+estornando na Stripe e fechando o portão · sessão em cookie `httpOnly` com
+`localStorage` vazio · mutação sem token de CSRF recusada com 403 · 6º cadastro no
+mesmo minuto recusado com 429.
+
+Cada uma dessas linhas tem a medição correspondente em `docs/plan/SPEC_CP*.md`.
 
 ---
 
@@ -503,11 +559,12 @@ Detalhe de cada validação em `docs/plan/SPEC_CP1*.md`.
 | `synchronize: true` | Usado em dev para auto-criar tabelas | Em produção, usar migrations |
 | Reservation scheduler | `setInterval` 30s | Em produção, usar @nestjs/schedule com Cron |
 | QR como data URL | Base64 no banco | Em produção, salvar PNG em S3/bucket |
-| Rate limiting | Redis-backed | Se Redis cai, fallback in-memory (menos preciso) |
+| Limite de falhas de login | Contagem em Redis | Se o Redis cai, o limitador falha **aberto**: prefere deixar todo mundo entrar a trancar todo mundo fora |
+| Limite geral de requisições | `@nestjs/throttler` em memória | Com múltiplas réplicas, cada uma conta a sua parte; para valer, apoiar em Redis |
 | Geo-sort | Haversine em SQL | Para volume alto, considerar PostGIS |
 | Auth próprio | Full control | Mais código para manter vs auth provider |
 | Token blacklist | Fail-open | Token revogado pode funcionar até 15min se Redis cair |
-| Event cancellation | Refund é placeholder | Stripe refund real precisa de implementação adicional |
+| Sessão em cookie cross-site | `sameSite: 'none'` + `secure`, obrigatório entre Vercel e Railway | O SameSite deixa de proteger contra CSRF; a defesa passa a ser explícita (dupla submissão + corpo só JSON + CORS fechado) |
 
 ---
 
