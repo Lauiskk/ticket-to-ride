@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -36,6 +37,9 @@ import {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // Criar conta é barato para quem abusa e caro para nós: cada uma é uma linha
+  // no banco e um hash bcrypt de 12 rounds.
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
   @Public()
   @SkipCsrf() // ainda não existe sessão de onde tirar o par
   @Post('register')

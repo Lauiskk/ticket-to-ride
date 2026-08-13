@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Param, Body, ParseUUIDPipe } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ReservationService } from './reservation.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { Roles } from '../shared/decorators/roles.decorator';
@@ -21,6 +22,13 @@ export class ReservationController {
    * Reserve seats for an event.
    * Organizers are BLOCKED from this endpoint (Req 3.7).
    */
+  /*
+    Cada reserva tranca assentos por 10 minutos. Sem limite, uma conta só
+    esvazia a casa inteira sem pagar nada — os assentos ficam presos até
+    expirar, e quem quer comprar de verdade encontra um evento "esgotado".
+    Dez por minuto cobre qualquer compra humana, inclusive quem erra e refaz.
+  */
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @Roles(UserRole.CLIENT)
   @Post()
   async create(

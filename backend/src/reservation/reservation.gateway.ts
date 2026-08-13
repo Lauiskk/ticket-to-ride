@@ -7,6 +7,7 @@ import {
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
+import { parseCorsOrigins } from '../shared/config/cors';
 
 /**
  * WebSocket gateway for real-time seat availability updates (Req 21.1-21.6).
@@ -16,10 +17,20 @@ import { Server, Socket } from 'socket.io';
  * - Broadcasts within 500ms of state change (Req 21.2)
  * - Clients join via 'join_event' message, leave via 'leave_event'
  */
+/*
+  A origem do socket segue a mesma lista fechada do HTTP (SPEC_CP21).
+
+  Estava `origin: '*'` com um comentário prometendo configurar "em produção"
+  — promessa que ninguém cumpre, porque nada quebra enquanto está aberto.
+  Com `credentials: true` junto, era pior que o padrão: qualquer site podia
+  abrir uma conexão autenticada com a sessão de quem estivesse visitando.
+  `parseCorsOrigins` é a mesma função que já decide isso para as rotas HTTP,
+  então as duas portas não têm como divergir.
+*/
 @WebSocketGateway({
   namespace: '/seats',
   cors: {
-    origin: '*', // Configured properly in production via env
+    origin: parseCorsOrigins(process.env.CORS_ORIGIN || 'http://localhost:5173'),
     credentials: true,
   },
 })

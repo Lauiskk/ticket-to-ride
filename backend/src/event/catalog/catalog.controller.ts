@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CatalogService } from './catalog.service';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { UserRole } from '../../user/entities/user.entity';
@@ -58,6 +59,13 @@ class SearchCatalogDto {
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
+  /*
+    Cada chamada aqui vira uma chamada ao Ticketmaster ou ao TMDb, e a cota do
+    Ticketmaster é de 5.000 por dia para a plataforma inteira. Vinte buscas por
+    minuto é folgado para alguém montando um evento e estreito o bastante para
+    um laço acidental não consumir o dia de todos os organizadores.
+  */
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @Roles(UserRole.ORGANIZER)
   @Get('search')
   async search(@Query() dto: SearchCatalogDto) {

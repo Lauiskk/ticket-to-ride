@@ -1,4 +1,5 @@
 import { Controller, Post, Get, Body } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { GateService, ValidationResult, GateEventSummary } from './gate.service';
 import { Roles } from '../shared/decorators/roles.decorator';
 import { CurrentUser } from '../shared/decorators/current-user.decorator';
@@ -35,6 +36,13 @@ export class GateController {
     return this.gateService.listEventsForGate();
   }
 
+  /*
+    A assinatura HMAC já torna inviável forjar um ingresso, então o limite aqui
+    não é contra falsificação: é contra alguém usar o portão como oráculo, indo
+    atrás de qual código existe. 60 por minuto é mais rápido do que qualquer
+    fila anda, e ainda assim fecha a porta para varredura.
+  */
+  @Throttle({ default: { ttl: 60_000, limit: 60 } })
   @Roles(UserRole.GATE)
   @Post('validate')
   async validate(

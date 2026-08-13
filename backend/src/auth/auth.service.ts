@@ -312,14 +312,36 @@ export class AuthService {
    * Extract client IP from the rightmost value of X-Forwarded-For (Req 2.10).
    * The rightmost value is the one appended by our trusted proxy.
    */
-  static extractClientIp(req: { headers: Record<string, string | string[] | undefined>; ip?: string }): string {
+  /**
+   * De quem é esta requisição (SPEC_CP21).
+   *
+   * `req.ip` primeiro, porque com `trust proxy` configurado o Express já sabe
+   * quantos saltos são nossos e devolve o cliente de verdade.
+   *
+   * A versão anterior lia `x-forwarded-for` e pegava a entrada **mais à
+   * direita**, com o comentário de que seria "a mais confiável". Não é: a
+   * direita é o proxy mais próximo da API — o mesmo endereço para todo mundo.
+   * O limitador de login passaria a contar todos os visitantes como uma pessoa
+   * só: cinco erros de qualquer um trancariam a porta para todos por meia hora,
+   * e o atacante real não ficaria isolado de ninguém. Um controle de segurança
+   * assim é pior que a ausência dele — vira negação de serviço de graça.
+   *
+   * O cliente é a **primeira** entrada da lista; as seguintes são os proxies do
+   * caminho.
+   */
+  static extractClientIp(req: {
+    headers: Record<string, string | string[] | undefined>;
+    ip?: string;
+  }): string {
+    if (req.ip?.trim()) return req.ip.trim();
+
     const xff = req.headers['x-forwarded-for'];
     if (xff) {
       const header = Array.isArray(xff) ? xff[0] : xff;
-      const ips = header.split(',').map((ip) => ip.trim());
-      // Rightmost = the one our proxy appended (most trusted)
-      return ips[ips.length - 1] || req.ip || '0.0.0.0';
+      const client = header.split(',')[0]?.trim();
+      if (client) return client;
     }
-    return req.ip || '0.0.0.0';
+
+    return '0.0.0.0';
   }
 }

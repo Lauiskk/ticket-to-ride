@@ -2,6 +2,7 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { SharedModule } from './shared/shared.module';
 import { AuthModule } from './auth/auth.module';
 import { EventModule } from './event/event.module';
@@ -31,6 +32,21 @@ import { getTypeOrmConfig } from './shared/config/typeorm.config';
       },
     }),
     TypeOrmModule.forRoot(getTypeOrmConfig()),
+    /*
+      Teto geral de requisições (SPEC_CP21).
+
+      O único limite que existia era o de falhas de login. Tudo o mais — criar
+      contas, abrir reservas, disparar pagamentos, ler o catálogo externo — não
+      tinha limite nenhum. O catálogo é o caso mais concreto: ele repassa a
+      chamada para o Ticketmaster, que dá 5.000 requisições por dia. Um laço
+      distraído torra a cota da plataforma inteira antes do café.
+
+      Este é o teto folgado, que não incomoda uso normal; as rotas que doem têm
+      limites próprios, mais apertados, declarados nelas.
+    */
+    ThrottlerModule.forRoot([
+      { name: 'default', ttl: 60_000, limit: 120 },
+    ]),
     SharedModule,
     AuthModule,
     EventModule,
@@ -43,6 +59,9 @@ import { getTypeOrmConfig } from './shared/config/typeorm.config';
     SeedModule,
   ],
   providers: [
+    // O limite vem antes da autenticação: quem está inundando a API não deveria
+    // custar uma consulta ao banco por tentativa.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Global guards — applied to all routes (use @Public() to skip auth)
     { provide: APP_GUARD, useClass: AppAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

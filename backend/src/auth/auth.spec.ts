@@ -61,8 +61,20 @@ describe('Property 6: Password Hash Round-Trip (bcrypt)', () => {
 
 // ─── Property 9: Client IP Extraction ───────────────────────────────────────
 
-describe('Property 9: Client IP Extraction (Rightmost X-Forwarded-For)', () => {
-  it('returns the rightmost IP from X-Forwarded-For header', () => {
+/**
+ * Esta propriedade afirmava o contrário do que deveria (corrigido no CP21).
+ *
+ * Ela exigia a entrada **mais à direita** de `x-forwarded-for`, e por isso
+ * passava verde enquanto o limitador de login contava o proxy no lugar do
+ * cliente. Um teste que fixa o comportamento errado não protege nada: ele
+ * defende o defeito de qualquer tentativa de conserto.
+ *
+ * A regra correta: `req.ip` — que o Express calcula sabendo quantos saltos são
+ * nossos, via `trust proxy` — e, na falta dele, a **primeira** entrada do
+ * cabeçalho, que é o cliente. Detalhe em `client-ip.spec.ts`.
+ */
+describe('Property 9: Client IP Extraction (req.ip vence o cabeçalho)', () => {
+  it('com trust proxy configurado, req.ip é a resposta', () => {
     fc.assert(
       fc.property(
         // Generate 1-5 IPs
@@ -78,15 +90,39 @@ describe('Property 9: Client IP Extraction (Rightmost X-Forwarded-For)', () => {
         (ipParts) => {
           const ips = ipParts.map(([a, b, c, d]) => `${a}.${b}.${c}.${d}`);
           const header = ips.join(', ');
-          const expectedIp = ips[ips.length - 1]; // rightmost
 
           const req = {
             headers: { 'x-forwarded-for': header },
-            ip: '127.0.0.1',
+            ip: '198.51.100.42',
           };
 
-          const result = AuthService.extractClientIp(req);
-          expect(result).toBe(expectedIp);
+          expect(AuthService.extractClientIp(req)).toBe('198.51.100.42');
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  it('sem req.ip, o cliente é a PRIMEIRA entrada — nunca o proxy da direita', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(
+            fc.integer({ min: 1, max: 255 }),
+            fc.integer({ min: 0, max: 255 }),
+            fc.integer({ min: 0, max: 255 }),
+            fc.integer({ min: 0, max: 255 }),
+          ),
+          { minLength: 2, maxLength: 5 },
+        ),
+        (ipParts) => {
+          const ips = ipParts.map(([a, b, c, d]) => `${a}.${b}.${c}.${d}`);
+
+          const result = AuthService.extractClientIp({
+            headers: { 'x-forwarded-for': ips.join(', ') },
+          });
+
+          expect(result).toBe(ips[0]);
         },
       ),
       { numRuns: 100 },
@@ -113,13 +149,12 @@ describe('Property 9: Client IP Extraction (Rightmost X-Forwarded-For)', () => {
     );
   });
 
-  it('trims whitespace from IPs in X-Forwarded-For', () => {
+  it('remove espaços em volta do endereço do cliente', () => {
     const req = {
       headers: { 'x-forwarded-for': '  10.0.0.1 , 192.168.1.1 ,  8.8.8.8  ' },
-      ip: '127.0.0.1',
     };
-    const result = AuthService.extractClientIp(req);
-    expect(result).toBe('8.8.8.8');
+    // O cliente é o primeiro da lista; 8.8.8.8 é o proxy mais próximo da API
+    expect(AuthService.extractClientIp(req)).toBe('10.0.0.1');
   });
 });
 
