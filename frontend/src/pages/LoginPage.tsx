@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { useAuth, getDefaultRoute } from '../context/AuthContext';
+import { useAuth, getDefaultRoute, type User } from '../context/AuthContext';
 import { sanitizeEmail } from '../lib/sanitize';
 import { apiUrl } from '../lib/api';
 import { TrainLogo } from '../components/TrainLogo';
@@ -9,33 +9,66 @@ import { TrainLogo } from '../components/TrainLogo';
 /** O bastante para pegar erro de digitação, sem tentar adivinhar o que é um e-mail. */
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * O `user` chega como JSON codificado na URL. O `useSearchParams` já decodifica
+ * uma vez; a versão antiga decodificava de novo por cima, o que funcionava por
+ * sorte — até aparecer um nome com `%` dentro.
+ */
+function parseUserParam(raw: string): User {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = JSON.parse(decodeURIComponent(raw));
+  }
+
+  const user = parsed as Partial<User>;
+  if (!user?.id || !user.email || !user.role) {
+    throw new Error('Resposta de login incompleta');
+  }
+  return user as User;
+}
+
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, adoptSession } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // Handle Google OAuth redirect
+  // Volta do Google: a sessão chega pronta, pela URL
   useEffect(() => {
     const token = searchParams.get('token');
     const userParam = searchParams.get('user');
     const errorParam = searchParams.get('error');
 
     if (errorParam) {
-      setError(decodeURIComponent(errorParam));
-    } else if (token && userParam) {
-      try {
-        const userData = JSON.parse(decodeURIComponent(userParam));
-        localStorage.setItem('ttr_token', token);
-        localStorage.setItem('ttr_user', JSON.stringify(userData));
-        navigate(getDefaultRoute(userData.role || 'client'));
-      } catch { /* ignore */ }
+      setError(errorParam);
+      return;
     }
-  }, [searchParams, navigate]);
+
+    if (!token || !userParam) return;
+
+    try {
+      const userData = parseUserParam(userParam);
+
+      // Pelo contexto, não pelo localStorage: é o que faz a barra de navegação
+      // saber que alguém entrou sem precisar recarregar a página.
+      adoptSession(token, userData);
+
+      // Tira o token da barra de endereços e do histórico antes de sair daqui.
+      // Ele continua viajando na URL até aqui (limitação anotada no README),
+      // mas não precisa ficar guardado no navegador nem vazar como Referer.
+      window.history.replaceState({}, '', '/login');
+
+      navigate(getDefaultRoute(userData.role || 'client'), { replace: true });
+    } catch {
+      setError('Não foi possível concluir o login com o Google. Tente novamente.');
+    }
+  }, [searchParams, navigate, adoptSession]);
 
   /**
    * Checagem ao sair do campo (SPEC_CP18 RF-4). Antes, um e-mail digitado

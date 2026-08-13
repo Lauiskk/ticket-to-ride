@@ -44,6 +44,28 @@ que parece erro do Google e é nosso.
 - RF-7: Quando o endereço é derivado, o boot registra aviso dizendo qual foi —
   configuração adivinhada precisa aparecer no log.
 
+## B18 — voltar do Google e continuar "deslogado"
+
+Achado depois que a URL foi autorizada no Google Console e o fluxo passou a ir
+até o fim: a pessoa terminava o login, caía em `/events` e a barra **continuava
+oferecendo "Entrar"**. A sessão estava salva; a tela é que não sabia.
+
+Causa: o `AuthProvider` lê o `localStorage` **uma vez, na montagem**. A
+`LoginPage` gravava token e usuário direto no storage e chamava `navigate()` —
+navegação de cliente, sem recarregar — então nada relia. Recarregar a página
+"resolvia", que é o comportamento que faz um login parecer instável.
+
+- RF-8: A sessão vinda do OAuth é adotada **pelo contexto**
+  (`adoptSession`), não escrevendo no `localStorage` por fora. Estado e
+  armazenamento mudam no mesmo lugar, como no login por senha.
+- RF-9: O token sai da barra de endereços e do histórico assim que é adotado.
+- RF-10: `user` malformado na URL vira mensagem de erro na tela de login, não
+  uma tela em branco.
+
+- AC-7: Voltando com `?token=…&user=…`, a barra mostra o nome e "Sair" **sem
+  recarregar**.
+- AC-8: Depois do redirecionamento, nenhuma entrada do histórico contém o token.
+
 ## Considerações de segurança
 
 - Nada muda no servidor: `POST /reservations` continua `@Roles(CLIENT)`. Esconder
@@ -55,6 +77,11 @@ que parece erro do Google e é nosso.
   (Req 6.4).
 - O mapa em modo leitura mostra o mesmo que `getAvailableSeats` já devolve
   publicamente hoje. Nenhum dado de comprador entra nessa tela.
+- O token ainda **viaja na URL** do callback para o frontend, e isso continua
+  sendo uma limitação assumida (está no README): query string entra em log de
+  servidor e em `Referer`. O que dá para fazer sem redesenhar o handshake é não
+  deixá-lo *ficar* no navegador — daí o RF-9. O certo seria o backend devolver
+  um código de uso único e o frontend trocá-lo por token num POST.
 
 ## Critérios de aceitação — testáveis
 
@@ -102,4 +129,14 @@ Em **produção** (Vercel + Railway), com o organizador demo:
 | `/events/:id` de evento próprio | "Este evento é seu — você está vendo a página como o cliente vê" + "Abrir bilheteria →", sem botão de compra ✔ |
 | Barra de navegação | "Eventos \| Painel" ✔ |
 | `GET /auth/google` | redireciona com `redirect_uri=https://…/auth/google/callback` ✔ |
-| Google recebendo esse endereço | **`redirect_uri_mismatch`** — falta autorizar a URL no Google Cloud Console. Passo do dono do app; não se resolve no código. |
+| Google recebendo esse endereço | **`redirect_uri_mismatch`** — falta autorizar a URL no Google Cloud Console. Passo do dono do app; não se resolve no código. (Autorizado depois pelo usuário; o fluxo passou a ir até o fim.) |
+
+**B18**, reproduzindo o retorno do Google com o mesmo formato de URL
+(`/login?token=…&user=<json>`):
+
+| Verificação | Antes | Depois |
+|---|---|---|
+| Barra depois do redirecionamento | "Entrar \| Cadastrar" | "Cliente Um \| Sair" — AC-7 ✔ |
+| Destino | `/events` | `/events` |
+| URL final | `/login?token=eyJ…&user=…` | `/events`, sem token — RF-9 ✔ |
+| Voltar no histórico | caía na URL com o token | `/events`, sem token — AC-8 ✔ |
