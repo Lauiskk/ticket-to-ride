@@ -80,7 +80,7 @@ que parece erro do Google e é nosso.
 - [x] Spec escrita
 - [x] Testes escritos — vermelhos (6 ACs do callback)
 - [x] Implementação concluída — testes verdes (122/122)
-- [x] Validação real executada — 2026-08-12 (produção pendente do deploy)
+- [x] Validação real executada — 2026-08-12 (local e produção)
 
 ### Evidência da validação real
 
@@ -94,3 +94,12 @@ que parece erro do Google e é nosso.
 | Visitante sem conta no mesmo evento | "Escolha seus assentos", 12 assentos clicáveis — AC-5 ✔ |
 | Portaria em `/events` | continua indo para `/gate` — AC-1 ✔ |
 | `GOOGLE_CALLBACK_URL` ausente | resolve para `.../auth/google/callback` — AC-6 ✔ (6 testes) |
+
+Em **produção** (Vercel + Railway), com o organizador demo:
+
+| Verificação | Resultado |
+|---|---|
+| `/events/:id` de evento próprio | "Este evento é seu — você está vendo a página como o cliente vê" + "Abrir bilheteria →", sem botão de compra ✔ |
+| Barra de navegação | "Eventos \| Painel" ✔ |
+| `GET /auth/google` | redireciona com `redirect_uri=https://…/auth/google/callback` ✔ |
+| Google recebendo esse endereço | **`redirect_uri_mismatch`** — falta autorizar a URL no Google Cloud Console. Passo do dono do app; não se resolve no código. |
