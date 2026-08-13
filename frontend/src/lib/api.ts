@@ -1,5 +1,11 @@
 const BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
+/** Lê um cookie legível por JavaScript — hoje, só o par de CSRF. */
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 /**
  * Absolute URL for an API path, for links the BROWSER navigates to.
  *
@@ -27,19 +33,44 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  private getHeaders(): Record<string, string> {
+  /**
+   * A sessão não passa mais por aqui (SPEC_CP20 RF-3).
+   *
+   * O token vivia no `localStorage` e ia como `Authorization: Bearer` — o que
+   * significa que qualquer script rodando na página conseguia lê-lo e levá-lo
+   * embora. Agora ele está num cookie `httpOnly` que o navegador anexa sozinho
+   * (via `credentials: 'include'`) e que JavaScript nenhum consegue ler.
+   *
+   * O que este método monta é a outra metade: o token de CSRF, que é legível de
+   * propósito. Ele não é segredo — a defesa está em um site de outra origem não
+   * conseguir lê-lo para copiar aqui.
+   */
+  private getHeaders(method: string): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const token = localStorage.getItem('ttr_token');
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+
+    if (method !== 'GET' && method !== 'HEAD') {
+      const csrf = readCookie('csrf_token');
+      if (csrf) headers['X-CSRF-Token'] = csrf;
     }
+
     return headers;
   }
 
-  async get<T = unknown>(path: string): Promise<{ data: T }> {
-    return this.request<T>('GET', path);
+  /**
+   * `options.allowAnonymous`: 401 é resposta legítima, não sessão perdida.
+   *
+   * Só `/auth/me` usa. Sem isso, um visitante abrindo a vitrine recebia 401 na
+   * verificação de sessão, o cliente tentava renovar, falhava, e o "tratamento"
+   * era mandá-lo para a tela de login — expulsando da loja pública justamente
+   * quem ainda não tem conta.
+   */
+  async get<T = unknown>(
+    path: string,
+    options?: { allowAnonymous?: boolean },
+  ): Promise<{ data: T }> {
+    return this.request<T>('GET', path, undefined, options);
   }
 
   async post<T = unknown>(path: string, body?: unknown): Promise<{ data: T }> {
@@ -50,13 +81,22 @@ class ApiClient {
     return this.request<T>('PATCH', path, body);
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<{ data: T }> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    options?: { allowAnonymous?: boolean },
+  ): Promise<{ data: T }> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: this.getHeaders(),
+      headers: this.getHeaders(method),
       credentials: 'include',
       body: body ? JSON.stringify(body) : undefined,
     });
+
+    if (res.status === 401 && options?.allowAnonymous) {
+      throw await this.handleError(res);
+    }
 
     // Handle 401 — attempt token refresh
     if (res.status === 401) {
@@ -65,7 +105,7 @@ class ApiClient {
         // Retry original request with new token
         const retryRes = await fetch(`${this.baseUrl}${path}`, {
           method,
-          headers: this.getHeaders(),
+          headers: this.getHeaders(method),
           credentials: 'include',
           body: body ? JSON.stringify(body) : undefined,
         });
@@ -119,17 +159,12 @@ class ApiClient {
       try {
         const res = await fetch(`${this.baseUrl}/auth/refresh`, {
           method: 'POST',
-          headers: this.getHeaders(),
+          headers: this.getHeaders('POST'),
           credentials: 'include',
         });
-        if (!res.ok) return false;
-        const data = await res.json();
-        if (data.accessToken) {
-          localStorage.setItem('ttr_token', data.accessToken);
-          if (data.user) localStorage.setItem('ttr_user', JSON.stringify(data.user));
-          return true;
-        }
-        return false;
+        // O cookie novo vem no `Set-Cookie` da resposta; não há nada para
+        // guardar aqui — o sucesso é o próprio 200.
+        return res.ok;
       } catch {
         return false;
       } finally {
@@ -141,9 +176,8 @@ class ApiClient {
   }
 
   private clearSession() {
-    localStorage.removeItem('ttr_user');
-    localStorage.removeItem('ttr_token');
-    // Redirect to login if not already there
+    // Nada a apagar no navegador: os cookies são do servidor e ele os limpa no
+    // logout. Aqui só resta tirar a pessoa de uma tela que ela não pode mais ver.
     if (!window.location.pathname.includes('/login')) {
       window.location.href = '/login';
     }

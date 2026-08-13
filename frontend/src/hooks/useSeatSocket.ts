@@ -36,6 +36,8 @@ export function useSeatSocket(eventId: string | undefined): { connected: boolean
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      // A sessão agora é cookie; sem isto ela não acompanha o handshake
+      withCredentials: true,
     });
     socketRef.current = socket;
 

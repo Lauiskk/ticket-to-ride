@@ -43,6 +43,7 @@ export function useTicketSocket(eventIds: (string | undefined)[]): { connected: 
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
+      withCredentials: true,
     });
 
     socket.on('connect', () => {

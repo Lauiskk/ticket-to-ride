@@ -24,6 +24,8 @@ export const ErrorCodes = {
   TOO_MANY_REQUESTS: 'TOO_MANY_REQUESTS',
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   PARSING_ERROR: 'PARSING_ERROR',
+  /** Mutação sem o par cookie/header de CSRF (SPEC_CP20 RF-5). */
+  CSRF_TOKEN_INVALID: 'CSRF_TOKEN_INVALID',
 
   // Domain-specific
   SEAT_UNAVAILABLE: 'SEAT_UNAVAILABLE',

@@ -15,10 +15,17 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { Verify2faDto } from './dto/verify-2fa.dto';
+import { randomBytes } from 'crypto';
 import { Public } from '../shared/decorators/public.decorator';
+import { SkipCsrf } from '../shared/decorators/skip-csrf.decorator';
 import { CurrentUser } from '../shared/decorators/current-user.decorator';
 import { JwtPayload } from './strategies/jwt.strategy';
 import { resolveFrontendUrl } from '../shared/config/frontend-url';
+import {
+  sessionCookieOptions,
+  SESSION_COOKIE,
+  CSRF_COOKIE,
+} from '../shared/config/session-cookie';
 
 /**
  * Authentication endpoints.
@@ -30,6 +37,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
+  @SkipCsrf() // ainda não existe sessão de onde tirar o par
   @Post('register')
   async register(
     @Body() dto: RegisterDto,
@@ -45,6 +53,7 @@ export class AuthController {
   }
 
   @Public()
+  @SkipCsrf() // idem: o par de CSRF nasce nesta resposta
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -70,6 +79,21 @@ export class AuthController {
     };
   }
 
+  /**
+   * Quem está logado (SPEC_CP20 RF-2).
+   *
+   * Com o token fora do JavaScript, o SPA não tem mais como saber sozinho quem
+   * é o usuário — o cookie é `httpOnly` justamente para não poder ser lido.
+   * Esta rota é como ele descobre, e o servidor é quem responde: o papel usado
+   * para montar a interface passa a vir do JWT verificado, não de um JSON que
+   * estava no `localStorage` e podia ter sido editado à mão.
+   */
+  @Get('me')
+  @HttpCode(HttpStatus.OK)
+  async me(@CurrentUser() user: JwtPayload) {
+    return this.authService.getProfile(user.sub);
+  }
+
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(
@@ -77,7 +101,9 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     await this.authService.logout(user.jti, user.exp);
-    res.clearCookie('access_token');
+    // Os dois nasceram juntos e vão embora juntos
+    res.clearCookie(SESSION_COOKIE, { path: '/' });
+    res.clearCookie(CSRF_COOKIE, { path: '/' });
     return { message: 'Logged out successfully' };
   }
 
@@ -120,14 +146,22 @@ export class AuthController {
 
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
+  /**
+   * Emite a sessão: o JWT num cookie que o JavaScript não lê, e o par de CSRF
+   * num cookie que ele lê de propósito (SPEC_CP20 RF-1, RF-5).
+   *
+   * Os dois saem sempre juntos — um cookie de sessão sem o par de CSRF deixaria
+   * a pessoa autenticada e incapaz de fazer qualquer mutação.
+   */
   private setTokenCookie(res: Response, token: string): void {
-    res.cookie('access_token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 15 * 60 * 1000, // 15 minutes
-      path: '/',
-    });
+    const nodeEnv = process.env.NODE_ENV;
+
+    res.cookie(SESSION_COOKIE, token, sessionCookieOptions(nodeEnv));
+    res.cookie(
+      CSRF_COOKIE,
+      randomBytes(32).toString('hex'),
+      sessionCookieOptions(nodeEnv, { readableByJs: true }),
+    );
   }
 
   // ─── Google OAuth ───────────────────────────────────────────────────────────
@@ -158,8 +192,16 @@ export class AuthController {
       return res.redirect(`${frontendUrl}/login?error=${encodeURIComponent(result.error)}`);
     }
 
-    // Success — set cookie and redirect to /login with token params (LoginPage handles them)
+    /*
+      A sessão vai no cookie; a URL não carrega mais nada (SPEC_CP20 RF-4).
+
+      Antes o token e o JSON do usuário viajavam na query string. O CP19 já os
+      apagava do histórico do navegador, mas isso é a última etapa do trajeto:
+      até chegar lá a URL inteira passa por log de servidor, por proxy e pelo
+      cabeçalho `Referer` de qualquer requisição que a página faça em seguida.
+      O `?oauth=ok` existe só para o SPA saber que deve perguntar quem entrou.
+    */
     this.setTokenCookie(res, result.accessToken!);
-    return res.redirect(`${frontendUrl}/login?token=${result.accessToken}&user=${encodeURIComponent(JSON.stringify(result.user))}`);
+    return res.redirect(`${frontendUrl}/login?oauth=ok`);
   }
 }

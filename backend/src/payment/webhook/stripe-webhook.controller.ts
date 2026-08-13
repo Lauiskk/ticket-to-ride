@@ -10,6 +10,7 @@ import {
 import { Request, Response } from 'express';
 import { PaymentService } from '../payment.service';
 import { Public } from '../../shared/decorators/public.decorator';
+import { SkipCsrf } from '../../shared/decorators/skip-csrf.decorator';
 
 /**
  * Stripe webhook endpoint (Req 8.4).
@@ -29,6 +30,9 @@ export class StripeWebhookController {
   constructor(private readonly paymentService: PaymentService) {}
 
   @Public()
+  // Quem chama é a Stripe, não um navegador: não há cookie de CSRF para
+  // apresentar, e a credencial dela é a assinatura conferida logo abaixo.
+  @SkipCsrf()
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   async handleWebhook(

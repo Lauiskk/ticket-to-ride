@@ -143,6 +143,30 @@ export class AuthService {
     return this.generateTokens(user);
   }
 
+  // ─── Perfil da sessão (SPEC_CP20 RF-2) ────────────────────────────────────
+
+  /**
+   * O usuário por trás do cookie.
+   *
+   * Lê do banco em vez de devolver o conteúdo do JWT: papel revogado ou conta
+   * apagada precisam aparecer aqui, não continuar valendo até o token expirar.
+   * Devolve exatamente o que a interface usa — nunca o hash de senha nem o
+   * segredo de 2FA.
+   */
+  async getProfile(userId: string): Promise<{
+    id: string;
+    email: string;
+    name: string;
+    role: UserRole;
+  }> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new AppError('Invalid credentials', ErrorCodes.UNAUTHORIZED, 401);
+    }
+
+    return { id: user.id, email: user.email, name: user.name, role: user.role };
+  }
+
   // ─── Token Operations ─────────────────────────────────────────────────────
 
   async logout(jti: string, exp: number): Promise<void> {
